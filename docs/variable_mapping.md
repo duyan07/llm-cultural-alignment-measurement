@@ -4,8 +4,8 @@
 
 ### Merge Key
 - **SPSS**: `s007_01`
-- **WVS CSV**: `S007_01` (uppercase S, underscore, zero-one)
-- **EVS CSV**: `S007_01` (same)
+- **WVS CSV**: `S007_01`
+- **EVS CSV**: `S007_01`
 - **Type**: Unique respondent identifier
 
 ### Wave Variables

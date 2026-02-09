@@ -1,5 +1,11 @@
+"""
+Verification script to validate WVS and EVS data conversion.
+Checks data structure, key variables, and data quality.
+"""
+
 import pandas as pd
 from pathlib import Path
+
 
 DATA_DIR = Path("data/raw/csv")
 DATASETS = {
@@ -20,15 +26,27 @@ SEARCH_PATTERNS = {
 }
 
 def load_dataset(name):
-    """Load both data and labels for a dataset"""
+    """
+    Load both data and labels for a dataset.
+
+    Args:
+        name: Dataset name (e.g., "WVS", "EVS")
+
+    Returns:
+        Dictionary with "data" and "labels" DataFrames
+    """
     paths = DATASETS[name]
     return {
         "data": pd.read_csv(paths["data"], low_memory=False),
         "labels": pd.read_csv(paths["labels"])
     }
 
+
 def print_basic_info(name, dataset):
-    """Print basic dataset statistics"""
+    """
+    Display basic statistics about a dataset.
+    Shows row count, column count, and first column names.
+    """
     df = dataset["data"]
     labels = dataset["labels"]
 
@@ -39,15 +57,28 @@ def print_basic_info(name, dataset):
     print(f"First few columns: {list(df.columns[:10])}\n")
 
 def find_variables(df, patterns):
-    """Find variables matching search patterns (case-insensitive)"""
+    """
+    Find variables matching search patterns (case-insensitive).
+
+    Args:
+        df: DataFrame to search
+        patterns: List of string patterns to match
+
+    Returns:
+        List of matching column names
+    """
     matches = []
     for col in df.columns:
         if any(pattern in col.lower() for pattern in patterns):
             matches.append(col)
     return matches
 
+
 def check_variable_presence(datasets, var_names):
-    """Check if variables exist across datasets"""
+    """
+    Check if specified variables exist across multiple datasets.
+    Displays presence/absence for each variable in each dataset.
+    """
     print("=== Key Variables Check ===")
     for var in var_names:
         presence = {name: var in ds["data"].columns
@@ -57,8 +88,12 @@ def check_variable_presence(datasets, var_names):
         print(f"{var:12} - {status}")
     print()
 
+
 def analyze_variable(df, var_name, dataset_name=""):
-    """Analyze a specific variable's distribution"""
+    """
+    Analyze distribution and quality of a specific variable.
+    Shows value counts, missing codes, and missing data percentage.
+    """
     if var_name not in df.columns:
         print(f"{var_name} not found in {dataset_name}")
         return
@@ -68,6 +103,7 @@ def analyze_variable(df, var_name, dataset_name=""):
     print(f"Value counts (top 10):")
     print(df[var_name].value_counts(dropna=False).head(10))
 
+    # Check for negative values which indicate missing data codes in IVS
     neg_mask = df[var_name] < 0
     if neg_mask.any():
         print(f"\nNegative values (potential missing codes):")

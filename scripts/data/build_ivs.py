@@ -1,7 +1,13 @@
+"""
+Build script for creating Integrated Values Survey (IVS) dataset.
+Merges WVS waves 5-7 and EVS waves 4-5 (covering 2005-2022).
+"""
+
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Add project root to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.data_loader import IVSBuilder
 
@@ -10,21 +16,28 @@ EVS_PATH = Path("data/raw/csv/evs_trend_1981-2017.csv")
 OUTPUT_PATH = Path("data/processed/ivs_2005-2022.csv")
 
 def main():
+    """
+    Main function to build and save IVS dataset.
+    Merges WVS and EVS data, validates, and saves with metadata.
+    """
     print("Building Integrated Values Survey (IVS) dataset...")
     print("="*60)
 
+    # Build merged dataset
     builder = IVSBuilder(WVS_PATH, EVS_PATH)
     ivs = builder.build_ivs(
         wvs_waves=[5, 6, 7],    # 2005-2022
         evs_waves=[4, 5]        # 2008-2017
     )
 
+    # Save merged dataset
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     ivs.to_csv(OUTPUT_PATH, index=False)
 
     print(f"\n IVS dataset saved to {OUTPUT_PATH}")
     print(f"  Shape: {ivs.shape[0]:,} rows x {ivs.shape[1]} columns")
 
+    # Save metadata about the dataset
     metadata = {
         "n_rows": len(ivs),
         "n_cols": len(ivs.columns),

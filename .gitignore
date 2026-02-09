@@ -1,30 +1,64 @@
+# Data files
 data/raw/
 data/processed/
 *.csv
 *.sav
 *.dta
 *.parquet
+*.pkl
+*.pickle
+*.h5
+*.hdf5
 
-docs/wvs_evs_merge_syntax_spss.md
-
+# Output files
 outputs/
 logs/
 *.log
 
+# Visualizations
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
 venv/
 env/
 .venv
+ENV/
 
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 .DS_Store
 
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment variables
 .env
 .env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db

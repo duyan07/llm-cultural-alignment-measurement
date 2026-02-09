@@ -1,9 +1,22 @@
+"""
+Test script to verify Ollama installation and model availability.
+Checks that at least one model is installed and can generate responses.
+"""
+
 import ollama
 import sys
 
+
 def test_ollama():
+    """
+    Verify Ollama setup by listing available models and testing generation.
+
+    Returns:
+        bool: True if Ollama is properly configured with working models, False otherwise
+    """
     print("Testing Ollama setup...")
 
+    # List all available models
     models = ollama.list()
     if not models["models"]:
         print("No models found. Please run 'ollama pull <model_name>' to download a model.")
@@ -13,6 +26,7 @@ def test_ollama():
     for model in models["models"]:
         print(f"   - {model['model']}")
 
+    # Test generation with the first available model
     test_model = models["models"][0]["model"]
     print(f"Testing model: {test_model}")
 
@@ -23,6 +37,7 @@ def test_ollama():
 
     print(f"Response from model: {response["response"]}")
     return True
+
 
 if __name__ == '__main__':
     success = test_ollama()

@@ -1,8 +1,22 @@
+"""
+Data exploration script for WVS and EVS datasets.
+Loads data files and displays basic statistics about structure and content.
+"""
+
 import pandas as pd
 import os
 
+
 def load_csv_file(file_path):
-    """Load CSV file and return DataFrame"""
+    """
+    Load CSV file and print basic statistics.
+
+    Args:
+        file_path: Path to CSV file
+
+    Returns:
+        DataFrame with loaded data
+    """
     print(f"Loading CSV file from: {file_path}")
     df = pd.read_csv(file_path, low_memory=False)
 
@@ -14,13 +28,26 @@ def load_csv_file(file_path):
     return df
 
 def load_labels(labels_path):
-    """Load variable labels from CSV"""
+    """
+    Load variable labels from CSV file into a dictionary.
+
+    Args:
+        labels_path: Path to labels CSV file
+
+    Returns:
+        Dictionary mapping variable names to labels
+    """
     if os.path.exists(labels_path):
         labels_df = pd.read_csv(labels_path)
         return dict(zip(labels_df['variable'], labels_df['label']))
     return {}
 
+
 def explore_labels(labels):
+    """
+    Display information about variable labels.
+    Shows total count and first 10 variable-label pairs.
+    """
     print("\n Label Information:")
     print(f"    Total labels: {len(labels)}")
 
@@ -30,7 +57,12 @@ def explore_labels(labels):
             break
         print(f"    {var}: {label}")
 
+
 def explore_data_structure(df):
+    """
+    Identify and display key structural columns in the dataset.
+    Looks for country and wave identifier columns.
+    """
     print("\n Data Structure Information:")
 
     country_cols = [col for col in df.columns if "country" in col.lower() or col in ["S003", "S003A"]]

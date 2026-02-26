@@ -61,6 +61,8 @@ class CulturalMapGenerator:
         self.pca_model = None
         self.scaler = None
         self.country_coords = None
+        self.question_means_ = {}
+        self.question_stds_ = {}
 
     def _extract_questions(self):
         """Extract the 10 questions + metadata from IVS dataframe."""
@@ -123,6 +125,8 @@ class CulturalMapGenerator:
             mean = df[q].mean()
             std = df[q].std()
             df_std[q] = (df[q] - mean) / std
+            self.question_means_[q] = mean
+            self.question_stds_[q] = std
             print(f"  {q}: μ={mean:.2f}, σ={std:.2f}")
 
         return df_std

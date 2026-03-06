@@ -9,90 +9,88 @@ Based on the model selection table from the research timeline.
 MODELS = {
     # Western (Open Source)
     'western_open': {
-        'gemma-2-2b-instruct': {
+        'gemma2:2b': {
             'provider': 'ollama',
             'origin': 'Google (US)',
             'size': '2B',
             'languages': ['English', 'multilingual'],
             'rationale': 'Stable Western open baseline; efficient and well-aligned',
-            'quantization': None,
             'priority': 'high'
         },
-        'llama3-8b-instruct': {
+        'llama3.1:8b': {
             'provider': 'ollama',
             'origin': 'Meta (US)',
             'size': '8B',
             'languages': ['English', 'multilingual'],
             'rationale': 'High-capacity Western reference model',
-            'quantization': '4-bit',
-            'priority': 'high',
-            'note': 'Limited runs due to size'
+            'priority': 'high'
         },
-        'mistral-7b-instruct': {
+        'mistral:7b': {
             'provider': 'ollama',
             'origin': 'Mistral AI (EU)',
             'size': '7B',
             'languages': ['English', 'multilingual'],
             'rationale': 'Compact Western comparison with strong reasoning',
-            'quantization': 'quantized',
-            'priority': 'medium'
+            'priority': 'high'
         },
     },
 
     # East Asian
     'east_asian': {
-        'qwen2.5-1.5b-instruct': {
+        'qwen2.5:1.5b': {
             'provider': 'ollama',
             'origin': 'Alibaba (China)',
             'size': '1.5B',
             'languages': ['Chinese', 'English', 'multilingual'],
-            'rationale': 'Primary non-Western anchor; strong instruction following',
-            'quantization': None,
+            'rationale': 'Small Chinese anchor; efficient for large-N sweeps',
             'priority': 'high'
         },
-        'qwen2.5-3b-instruct': {
+        'qwen2.5:3b': {
             'provider': 'ollama',
             'origin': 'Alibaba (China)',
             'size': '3B',
             'languages': ['Chinese', 'English', 'multilingual'],
-            'rationale': 'Primary non-Western anchor; strong instruction following',
-            'quantization': None,
-            'priority': 'medium'
+            'rationale': 'Mid-size Chinese anchor for size comparison',
+            'priority': 'high'
         },
-        'qwen2.5-7b-instruct': {
+        'qwen2.5:7b': {
             'provider': 'ollama',
             'origin': 'Alibaba (China)',
             'size': '7B',
             'languages': ['Chinese', 'English', 'multilingual'],
-            'rationale': 'Primary non-Western anchor; strong instruction following',
-            'quantization': None,
+            'rationale': 'Full-size Chinese anchor; primary non-Western model',
+            'priority': 'high'
+        },
+        'yi:6b': {
+            'provider': 'ollama',
+            'origin': '01.AI (China)',
+            'size': '6B',
+            'languages': ['Chinese', 'English'],
+            'rationale': 'Second Chinese-origin model; allows within-region comparison',
             'priority': 'medium'
         },
     },
 
     # MENA / Arabic
     'mena_arabic': {
-        'jais-13b-chat': {
+        'salmatrafi/acegpt:7b': {
             'provider': 'ollama',
-            'origin': 'UAE (MBZUAI/G42)',
-            'size': '13B',
+            'origin': 'MBZUAI (UAE)',
+            'size': '7B',
             'languages': ['Arabic', 'English'],
-            'rationale': 'Arabic-centric non-Western representation',
-            'quantization': '4-bit',
-            'priority': 'high',
-            'status': 'check_availability'
+            'rationale': 'Arabic-centric non-Western model; primary MENA region anchor',
+            'priority': 'high'
         },
     },
 
     # Low-Resource / Global
     'global': {
-        'phi3-mini': {
+        'phi3:mini': {
             'provider': 'ollama',
-            'origin': 'Microsoft (Global)',
+            'origin': 'Microsoft (US)',
             'size': '3.8B',
             'languages': ['English', 'multilingual'],
-            'rationale': 'Large-N CPU sweeps; robustness testing',
-            'quantization': None,
+            'rationale': 'Efficient general model; robustness and CPU-sweep testing',
             'priority': 'high'
         },
     },
@@ -193,7 +191,7 @@ def get_models_by_priority(priority='high'):
 def get_ollama_models():
     """Get list of models that should be run via Ollama."""
     models = []
-    for category, category_models in MODELS.items():
+    for _, category_models in MODELS.items():
         for model_name, config in category_models.items():
             if config.get('provider') == 'ollama':
                 models.append(model_name)
@@ -203,7 +201,7 @@ def get_ollama_models():
 def get_api_models():
     """Get list of models that require API access."""
     models = []
-    for category, category_models in MODELS.items():
+    for _, category_models in MODELS.items():
         for model_name, config in category_models.items():
             if config.get('provider') in ['openai', 'anthropic', 'google']:
                 models.append((model_name, config['provider']))
@@ -218,21 +216,22 @@ def get_model_info(model_name):
     return None
 
 
-# Ollama model name mappings (exact names for pulling)
-# NOTE: Ollama models don't use "-instruct" suffix
-OLLAMA_MODEL_NAMES = {
-    'gemma-2-2b': 'gemma2:2b',                    # Google Gemma 2 (2B params)
-    'llama3.1-8b': 'llama3.1:8b',                 # Meta LLaMA 3.1 (8B params)
-    'mistral-7b': 'mistral:7b',                   # Mistral AI (7B params)
-    'qwen2.5-1.5b': 'qwen2.5:1.5b',               # Alibaba Qwen 2.5 (1.5B params)
-    'qwen2.5-3b': 'qwen2.5:3b',                   # Alibaba Qwen 2.5 (3B params)
-    'qwen2.5-7b': 'qwen2.5:7b',                   # Alibaba Qwen 2.5 (7B params)
-    'phi3-mini': 'phi3:mini',                     # Microsoft Phi-3 Mini (3.8B params)
-}
-
 # Quick access to recommended models for each phase
 RECOMMENDED_MODELS = {
-    'testing': ['gemma2:2b', 'qwen2.5:1.5b'],           # Fast models for testing
-    'baseline': ['gemma2:2b', 'qwen2.5:1.5b', 'phi3:mini'],  # Core baseline
-    'full': ['gemma2:2b', 'llama3.1:8b', 'mistral:7b', 'qwen2.5:7b', 'phi3:mini'],  # Complete study
+    # Fast models for quick iteration and testing
+    'testing': ['gemma2:2b', 'qwen2.5:1.5b'],
+    # All currently installed local models
+    'baseline': [
+        'gemma2:2b', 'phi3:mini',
+        'qwen2.5:1.5b', 'qwen2.5:3b', 'qwen2.5:7b',
+        'mistral:7b', 'llama3.1:8b', 'yi:6b',
+        'salmatrafi/acegpt:7b',
+    ],
+    # Baseline + proprietary API models
+    'full': [
+        'gemma2:2b', 'phi3:mini',
+        'qwen2.5:1.5b', 'qwen2.5:3b', 'qwen2.5:7b',
+        'mistral:7b', 'llama3.1:8b', 'yi:6b',
+        'salmatrafi/acegpt:7b', 'gpt-4o',
+    ],
 }

@@ -1,7 +1,10 @@
-# Data files
-data/raw/
-data/processed/
-*.csv
+# Data files — ignore contents, keep folder structure
+data/raw/*
+data/processed/*
+data/results/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/results/.gitkeep
 *.sav
 *.dta
 *.parquet
@@ -10,9 +13,11 @@ data/processed/
 *.h5
 *.hdf5
 
-# Output files
-outputs/
-logs/
+# Output files — ignore contents, keep folders
+outputs/*
+logs/*
+!outputs/.gitkeep
+!logs/.gitkeep
 *.log
 
 # Visualizations

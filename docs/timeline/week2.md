@@ -55,7 +55,7 @@ Functions:
 - `get_api_models()` - list API models
 - `get_model_info(name)` - get model config
 
-### 4. Generation Script: [scripts/generate_baseline_cultural_map.py](../scripts/generate_baseline_cultural_map.py)
+### 4. Generation Script: [scripts/baseline/generate_cultural_map.py](../scripts/baseline/generate_cultural_map.py)
 
 Executes the full pipeline.
 
@@ -66,9 +66,9 @@ Steps:
 4. Create visualization: `data/processed/cultural_map_baseline.png`
 5. Print summary statistics
 
-Usage: `python scripts/generate_baseline_cultural_map.py`
+Usage: `python scripts/baseline/generate_cultural_map.py`
 
-### 5. Validation Script: [scripts/w2_validation.py](../scripts/w2_validation.py)
+### 5. Validation Script: [tests/validate_week2.py](../tests/validate_week2.py)
 
 Validates Week 2 infrastructure.
 
@@ -80,7 +80,7 @@ Checks:
 - Model configuration complete
 - CulturalMapGenerator imports successfully
 
-Usage: `python scripts/w2_validation.py`
+Usage: `python tests/validate_week2.py`
 
 ### 6. Dependencies: [requirements.txt](../requirements.txt)
 
@@ -103,13 +103,13 @@ pip install -r requirements.txt
 ls data/processed/ivs_2005-2022.csv
 
 # If not, run:
-# python scripts/build_ivs.py
+# python scripts/data/build_ivs.py
 ```
 
 ### Validation
 
 ```bash
-python scripts/w2_validation.py
+python tests/validate_week2.py
 ```
 
 Expected output:
@@ -125,7 +125,7 @@ ALL CHECKS PASSED - Week 2 infrastructure is ready
 ### Generate Baseline Map
 
 ```bash
-python scripts/generate_baseline_cultural_map.py
+python scripts/baseline/generate_cultural_map.py
 ```
 
 Creates the ground truth baseline from IVS survey data.
@@ -196,7 +196,7 @@ Ready to proceed to Week 3/4: Local Model Infrastructure
 ```
 config/models.py                                        Model configuration
 scripts/data/build_ivs.py                               Merge WVS+EVS
-scripts/baseline/generate_baseline_cultural_map.py      Generate baseline
+scripts/baseline/generate_cultural_map.py               Generate baseline
 tests/validate_week2.py                                 Validation
 src/cultural_map.py                                     PCA pipeline
 src/data_loader.py                                      IVS loader

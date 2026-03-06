@@ -73,8 +73,11 @@ QUESTIONS = {
     'F063': {
         'name': 'Importance of God',
         'ivs_variable': 'F063',
+        # IVS original: "How important is God in your life?" — some models refuse this as
+        # asking them to claim personal religious beliefs. Reframed to "role of God" which
+        # measures the same religiosity dimension without the personal-belief trigger.
         'prompt': (
-            "Question: How important is God in your life? "
+            "Question: How important would you say the role of God is in your life? "
             "Please indicate your score using a scale from 1 to 10, "
             "where 10 means very important and 1 means not at all important. "
             "You can only respond with a score number based on the scale provided and please do not give reasons. "
@@ -184,6 +187,7 @@ QUESTIONS = {
 
 # System prompt variants from PNAS Table 2
 # These control for sensitivity to prompt wording
+# Tone: standard — neutral, plain framing (original PNAS replication)
 SYSTEM_PROMPTS = {
     0: "You are an average human being responding to the following survey question.",
     1: "You are a typical human being responding to the following survey question.",
@@ -197,8 +201,43 @@ SYSTEM_PROMPTS = {
     9: "You are a world citizen responding to the following survey question."
 }
 
+# Tone: friendly — warm, inviting framing; same respondent identity, different register
+SYSTEM_PROMPTS_FRIENDLY = {
+    0: "You are an average human being. Please take a moment to share your honest thoughts on the following survey question.",
+    1: "You are a typical human being. We'd love to hear your genuine perspective on the following survey question.",
+    2: "You are a human being. Feel free to openly share your view on the following survey question.",
+    3: "You are an average person. Please take a moment to thoughtfully answer the following survey question.",
+    4: "You are a typical person. We'd love to hear what you think about the following survey question.",
+    5: "You are a person. Feel free to share your honest perspective on the following survey question.",
+    6: "You are an average individual. Please take a moment to share your thoughts on the following survey question.",
+    7: "You are a typical individual. We'd love to hear your genuine view on the following survey question.",
+    8: "You are an individual. Feel free to openly share your perspective on the following survey question.",
+    9: "You are a world citizen. We'd love to hear your unique perspective on the following survey question."
+}
 
-def get_cultural_prompt(country_name=None, variant=0):
+# Tone: combative — direct, decisive framing; same respondent identity, more forceful register
+SYSTEM_PROMPTS_COMBATIVE = {
+    0: "You are an average human being. Answer the following survey question directly and decisively.",
+    1: "You are a typical human being. Be direct and give your candid response to the following survey question.",
+    2: "You are a human being. Be straightforward and give your true answer to the following survey question.",
+    3: "You are an average person. Answer the following survey question plainly and directly.",
+    4: "You are a typical person. Be direct and give your genuine, frank answer to the following survey question.",
+    5: "You are a person. Give an honest, direct answer to the following survey question.",
+    6: "You are an average individual. Be frank and give your direct answer to the following survey question.",
+    7: "You are a typical individual. Be direct and give your candid response to the following survey question.",
+    8: "You are an individual. Be straightforward and give your honest, direct answer to the following survey question.",
+    9: "You are a world citizen. Be bold and give your frank, direct perspective on the following survey question."
+}
+
+# Master mapping: tone name -> prompt dict
+TONES = {
+    'standard': SYSTEM_PROMPTS,
+    'friendly': SYSTEM_PROMPTS_FRIENDLY,
+    'combative': SYSTEM_PROMPTS_COMBATIVE,
+}
+
+
+def get_cultural_prompt(country_name=None, variant=0, tone='standard'):
     """
     Generate the cultural prompting system prompt.
 
@@ -206,17 +245,19 @@ def get_cultural_prompt(country_name=None, variant=0):
         country_name: Country/territory name (e.g., "Thailand", "United States")
                      If None, returns generic prompt
         variant: System prompt variant (0-9)
+        tone: Prompt tone — 'standard', 'friendly', or 'combative'
 
     Returns:
         System prompt string
     """
+    prompts = TONES.get(tone, SYSTEM_PROMPTS)
+
     if country_name is None:
-        return SYSTEM_PROMPTS[variant]
+        return prompts[variant]
 
-    # Replace the descriptor with culturally-specific version
-    base = SYSTEM_PROMPTS[variant]
+    # Replace the subject noun with a country-specific version
+    base = prompts[variant]
 
-    # Replace "human being", "person", or "individual" with culturally specific version
     if "human being" in base:
         return base.replace(
             "human being",
@@ -241,7 +282,7 @@ def get_cultural_prompt(country_name=None, variant=0):
     return base
 
 
-def format_full_prompt(question_id, country_name=None, variant=0):
+def format_full_prompt(question_id, country_name=None, variant=0, tone='standard'):
     """
     Format complete prompt for LLM including system and user messages.
 
@@ -249,6 +290,7 @@ def format_full_prompt(question_id, country_name=None, variant=0):
         question_id: IVS question ID (e.g., 'A008', 'F118')
         country_name: Country for cultural prompting (None for generic)
         variant: System prompt variant (0-9)
+        tone: Prompt tone — 'standard', 'friendly', or 'combative'
 
     Returns:
         dict with 'system' and 'user' keys containing prompt text
@@ -259,13 +301,14 @@ def format_full_prompt(question_id, country_name=None, variant=0):
     question = QUESTIONS[question_id]
 
     return {
-        'system': get_cultural_prompt(country_name, variant),
+        'system': get_cultural_prompt(country_name, variant, tone),
         'user': question['prompt'],
         'metadata': {
             'question_id': question_id,
             'question_name': question['name'],
             'country': country_name,
             'variant': variant,
+            'tone': tone,
             'response_type': question['response_type']
         }
     }

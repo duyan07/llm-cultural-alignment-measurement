@@ -32,8 +32,8 @@ def test_ollama():
         if not models:
             print("FAIL: No Ollama models found")
             print("   Install models with:")
-            print("   ollama pull gemma2:2b-instruct")
-            print("   ollama pull qwen2.5:1.5b-instruct")
+            print("   ollama pull gemma2:2b")
+            print("   ollama pull qwen2.5:1.5b")
             return False
 
         print(f"PASS: Found {len(models)} Ollama models:")

@@ -11,8 +11,6 @@ This module implements the exact methodology from the PNAS paper:
 import pandas as pd
 import numpy as np
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
-from scipy.stats import zscore
 
 
 class CulturalMapGenerator:

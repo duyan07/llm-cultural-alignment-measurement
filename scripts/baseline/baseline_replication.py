@@ -15,7 +15,6 @@ import sys
 from pathlib import Path
 import pandas as pd
 import numpy as np
-import json
 from datetime import datetime
 import argparse
 
@@ -24,8 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from src.llm_interface import LLMQueryWrapper
 from src.response_parser import ResponseParser
 from src.query_logger import QueryLogger
-from src.prompts import QUESTIONS, SYSTEM_PROMPTS, format_full_prompt
+from src.prompts import QUESTIONS, TONES, format_full_prompt
 from src.cultural_map import CulturalMapGenerator
+from src.geo_data import COUNTRY_NAMES, ISO3_TO_ZONE, load_iso3_lookup, quadrant_label, typical_countries
 
 # Paths
 BASELINE_PATH = Path("data/processed/cultural_map_coordinates.csv")
@@ -45,9 +45,13 @@ class BaselineReplicator:
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Load the pre-computed country coordinates from the IVS baseline
+        # Load baseline and annotate with ISO-3, name, and cultural zone
         print("Loading baseline coordinates...")
         self.baseline_df = pd.read_csv(BASELINE_PATH)
+        iso_lookup = load_iso3_lookup(IVS_PATH)
+        self.baseline_df['iso3'] = self.baseline_df['country_code'].map(iso_lookup).fillna('???')
+        self.baseline_df['name'] = self.baseline_df['iso3'].map(COUNTRY_NAMES).fillna(self.baseline_df['iso3'])
+        self.baseline_df['zone'] = self.baseline_df['iso3'].map(ISO3_TO_ZONE).fillna('Other')
         print(f"  Loaded {len(self.baseline_df)} countries\n")
 
         self.logger = QueryLogger(log_dir=LOGS_DIR)
@@ -67,7 +71,12 @@ class BaselineReplicator:
             return model_names
         except:
             print("No Ollama models found, using default list")
-            return ['gemma2:2b', 'qwen2.5:1.5b', 'phi3:mini']
+            return [
+                'gemma2:2b', 'phi3:mini',
+                'qwen2.5:1.5b', 'qwen2.5:3b', 'qwen2.5:7b',
+                'mistral:7b', 'llama3.1:8b', 'yi:6b',
+                'salmatrafi/acegpt:7b',
+            ]
 
     def _load_pca_transformation(self):
         """Load PCA transformation from baseline generation."""
@@ -76,10 +85,10 @@ class BaselineReplicator:
         generator.fit()
         return generator
 
-    def query_model_baseline(self, model_name, provider='ollama'):
-        """Query a model with all IVS questions (no cultural prompting)."""
+    def query_model_baseline(self, model_name, provider='ollama', tone='standard'):
+        """Query a model with all IVS questions (no cultural prompting) for one tone."""
         print(f"\n{'='*70}")
-        print(f"Querying {model_name} (provider: {provider})")
+        print(f"Querying {model_name} (provider: {provider}, tone: {tone})")
         print(f"{'='*70}")
 
         # Create wrapper
@@ -90,23 +99,23 @@ class BaselineReplicator:
             seed=42
         )
 
+        tone_prompts = TONES[tone]
         results = []
-        total_queries = len(QUESTIONS) * len(SYSTEM_PROMPTS)
-        query_count = 0
+        total_queries = len(QUESTIONS) * len(tone_prompts)
 
         # Query each question with each variant
         for question_id, question_info in QUESTIONS.items():
             print(f"\n  Question {question_id}: {question_info['name']}")
 
-            for variant_idx in range(len(SYSTEM_PROMPTS)):
-                query_count += 1
-                print(f"    Variant {variant_idx + 1}/{len(SYSTEM_PROMPTS)}... ", end='', flush=True)
+            for variant_idx in range(len(tone_prompts)):
+                print(f"    Variant {variant_idx + 1}/{len(tone_prompts)}... ", end='', flush=True)
 
-                # Format prompt
+                # Format prompt with the current tone
                 prompt = format_full_prompt(
                     question_id=question_id,
                     country_name=None,
-                    variant=variant_idx
+                    variant=variant_idx,
+                    tone=tone
                 )
 
                 # Query model
@@ -115,7 +124,8 @@ class BaselineReplicator:
                     user_prompt=prompt['user'],
                     metadata={
                         'question_id': question_id,
-                        'variant': variant_idx
+                        'variant': variant_idx,
+                        'tone': tone
                     }
                 )
 
@@ -139,7 +149,8 @@ class BaselineReplicator:
                     is_valid=is_valid,
                     metadata={
                         'question_id': question_id,
-                        'variant': variant_idx
+                        'variant': variant_idx,
+                        'tone': tone
                     },
                     error=result.get('error')
                 )
@@ -148,6 +159,7 @@ class BaselineReplicator:
                 results.append({
                     'model': model_name,
                     'provider': provider,
+                    'tone': tone,
                     'question_id': question_id,
                     'variant': variant_idx,
                     'raw_response': result.get('response', ''),
@@ -195,30 +207,31 @@ class BaselineReplicator:
                 print(f"  {question_id}: NO VALID RESPONSES")
                 question_means[question_id] = np.nan
 
-        # Project averaged responses through the baseline PCA transformation
-        try:
-            # Standardize using baseline statistics stored in the fitted generator
-            means = self.pca_generator.question_means_
-            stds = self.pca_generator.question_stds_
-
-            standardized = [
-                (question_means.get(qid, np.nan) - means[qid]) / stds[qid]
-                for qid in QUESTIONS.keys()
-            ]
-
-            # Apply PCA transformation and rescale using PNAS formula
-            pca_scores = self.pca_generator.pca_model.transform(
-                np.array(standardized).reshape(1, -1)
-            )[0]
-
-            x = 1.81 * pca_scores[0] + 0.38
-            y = 1.61 * pca_scores[1] - 0.01
-
-            print(f"  Coordinates: ({x:.3f}, {y:.3f})")
-            return x, y
-        except Exception as e:
-            print(f"  Error: {e}")
+        # Abort if any question produced no valid responses — PCA cannot handle NaN
+        missing_qs = [qid for qid, v in question_means.items() if np.isnan(v)]
+        if missing_qs:
+            print(f"  Skipping coordinates: no valid responses for {missing_qs}")
             return np.nan, np.nan
+
+        # Project averaged responses through the baseline PCA transformation
+        means = self.pca_generator.question_means_
+        stds = self.pca_generator.question_stds_
+
+        standardized = [
+            (question_means[qid] - means[qid]) / stds[qid]
+            for qid in QUESTIONS.keys()
+        ]
+
+        # Apply PCA transformation and rescale using PNAS formula
+        pca_scores = self.pca_generator.pca_model.transform(
+            np.array(standardized).reshape(1, -1)
+        )[0]
+
+        x = 1.81 * pca_scores[0] + 0.38
+        y = 1.61 * pca_scores[1] - 0.01
+
+        print(f"  Coordinates: ({x:.3f}, {y:.3f})")
+        return x, y
 
     def calculate_distances(self, model_x, model_y):
         """Calculate Euclidean distance from model to each country."""
@@ -229,81 +242,123 @@ class BaselineReplicator:
                 (model_x - country['survival_selfexpression'])**2 +
                 (model_y - country['traditional_secular'])**2
             )
-
             distances.append({
                 'country_code': country['country_code'],
-                'distance': dist
+                'iso3': country['iso3'],
+                'name': country['name'],
+                'zone': country['zone'],
+                'distance': dist,
             })
 
-        return pd.DataFrame(distances).sort_values('distance')
+        return pd.DataFrame(distances).sort_values('distance').reset_index(drop=True)
 
-    def run(self):
-        """Run complete baseline replication."""
+    def run(self, tones=None):
+        """Run complete baseline replication across all tones."""
+        tones = tones or list(TONES.keys())
+
         print("\n" + "="*70)
         print("BASELINE REPLICATION")
         print("="*70)
-        print(f"\nModels to test: {self.models_to_test}\n")
+        print(f"\nModels to test: {self.models_to_test}")
+        print(f"Tones to test:  {tones}\n")
 
-        all_results = {'models': [], 'responses': [], 'distances': []}
+        # Results keyed by tone
+        all_results = {tone: {'models': [], 'responses': [], 'distances': []} for tone in tones}
 
-        for model_name in self.models_to_test:
-            try:
-                # Query model
-                responses_df = self.query_model_baseline(model_name)
+        for tone in tones:
+            print(f"\n{'#'*70}")
+            print(f"# TONE: {tone.upper()}")
+            print(f"{'#'*70}")
 
-                # Calculate coordinates
-                x, y = self.calculate_model_coordinates(responses_df, model_name)
+            for model_name in self.models_to_test:
+                try:
+                    responses_df = self.query_model_baseline(model_name, tone=tone)
+                    x, y = self.calculate_model_coordinates(responses_df, model_name)
 
-                if not (np.isnan(x) or np.isnan(y)):
-                    # Calculate distances
-                    distances_df = self.calculate_distances(x, y)
+                    # Per-question refusal rates (always computed, regardless of mappability)
+                    refusal_rates = {}
+                    for qid in QUESTIONS:
+                        q_rows = responses_df[responses_df['question_id'] == qid]
+                        n_valid = int(q_rows['is_valid'].sum())
+                        n_total = len(q_rows)
+                        refusal_rates[qid] = round(1 - n_valid / n_total, 3) if n_total > 0 else 1.0
 
-                    all_results['models'].append({
-                        'model': model_name,
-                        'survival_selfexpression': x,
-                        'traditional_secular': y,
-                        'closest_country': distances_df.iloc[0]['country_code'],
-                        'mean_distance': distances_df['distance'].mean()
-                    })
+                    if not (np.isnan(x) or np.isnan(y)):
+                        distances_df = self.calculate_distances(x, y)
+                        top = distances_df.head(5)
+                        closest = distances_df.iloc[0]
+                        mean_dist = distances_df['distance'].mean()
 
-                    all_results['responses'].append(responses_df)
-                    distances_df['model'] = model_name
-                    all_results['distances'].append(distances_df)
+                        model_record = {
+                            'model': model_name,
+                            'tone': tone,
+                            'survival_selfexpression': x,
+                            'traditional_secular': y,
+                            'closest_country': closest['iso3'],
+                            'closest_country_name': closest['name'],
+                            'closest_zone': closest['zone'],
+                            'closest_distance': closest['distance'],
+                            'mean_distance': mean_dist,
+                        }
+                        model_record.update({f'{qid}_refusal_rate': r for qid, r in refusal_rates.items()})
+                        all_results[tone]['models'].append(model_record)
 
-                    print(f"\n  Done. Closest to country {distances_df.iloc[0]['country_code']}")
+                        all_results[tone]['responses'].append(responses_df)
+                        distances_df['model'] = model_name
+                        distances_df['tone'] = tone
+                        all_results[tone]['distances'].append(distances_df)
 
-            except Exception as e:
-                print(f"\n  Error: {e}")
+                        # ── Per-model summary ──────────────────────────────
+                        print(f"\n  ┌─ {model_name}  [{tone}]")
+                        print(f"  │  Position : ({x:.3f}, {y:.3f})")
+                        print(f"  │  Quadrant : {quadrant_label(x, y)}")
+                        print(f"  │  Typical  : {typical_countries(x, y)}")
+                        print(f"  │  Mean dist to all countries: {mean_dist:.3f}")
+                        print(f"  │  Top-5 closest countries:")
+                        for _, row in top.iterrows():
+                            print(f"  │    {row['iso3']:3s}  {row['name']:<20s}"
+                                  f"  d={row['distance']:.3f}  [{row['zone']}]")
+                        refused = [(qid, r) for qid, r in refusal_rates.items() if r > 0]
+                        if refused:
+                            print(f"  │  Refusals: " +
+                                  "  ".join(f"{qid}={r*100:.0f}%" for qid, r in refused))
+                        print(f"  └─────────────────────────────────────────")
+
+                except Exception as e:
+                    print(f"\n  Error ({model_name}, tone={tone}): {e}")
 
         return all_results
 
-    def save_results(self, results):
-        """Save results to CSV files."""
+    def save_results(self, all_results):
+        """Save results to CSV files, one set per tone."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        if results['models']:
-            models_df = pd.DataFrame(results['models'])
-            path = RESULTS_DIR / f"baseline_models_{timestamp}.csv"
-            models_df.to_csv(path, index=False)
-            print(f"\nSaved: {path}")
+        for tone, results in all_results.items():
+            if results['models']:
+                models_df = pd.DataFrame(results['models'])
+                path = RESULTS_DIR / f"baseline_models_{tone}_{timestamp}.csv"
+                models_df.to_csv(path, index=False)
+                print(f"\nSaved: {path}")
 
-        if results['distances']:
-            distances_df = pd.concat(results['distances'], ignore_index=True)
-            path = RESULTS_DIR / f"baseline_distances_{timestamp}.csv"
-            distances_df.to_csv(path, index=False)
-            print(f"Saved: {path}")
+            if results['distances']:
+                distances_df = pd.concat(results['distances'], ignore_index=True)
+                path = RESULTS_DIR / f"baseline_distances_{tone}_{timestamp}.csv"
+                distances_df.to_csv(path, index=False)
+                print(f"Saved: {path}")
 
         self.logger.print_stats()
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Week 6: Baseline Replication')
+    parser = argparse.ArgumentParser(description='Baseline Replication')
     parser.add_argument('--models', nargs='+', help='Models to test')
+    parser.add_argument('--tones', nargs='+', choices=list(TONES.keys()),
+                        help='Tones to test (default: all)')
     args = parser.parse_args()
 
     replicator = BaselineReplicator(models_to_test=args.models)
-    results = replicator.run()
-    replicator.save_results(results)
+    all_results = replicator.run(tones=args.tones)
+    replicator.save_results(all_results)
 
     print("\nDone. Generate visualization with scripts/baseline/visualize_baseline.py")
 

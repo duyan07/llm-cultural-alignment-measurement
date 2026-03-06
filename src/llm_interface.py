@@ -152,11 +152,7 @@ class LLMQueryWrapper:
             }
 
     def _query_ollama(self, system_prompt: str, user_prompt: str) -> Dict:
-        """Query Ollama model."""
-        # Combine system and user prompts
-        full_prompt = f"{system_prompt}\n\n{user_prompt}"
-
-        # Build options
+        """Query Ollama model using chat endpoint for proper instruct model support."""
         options = {
             'temperature': self.temperature,
             'num_predict': self.max_tokens,
@@ -165,15 +161,21 @@ class LLMQueryWrapper:
         if self.seed is not None:
             options['seed'] = self.seed
 
-        # Query model
-        response = ollama.generate(
+        # Use chat endpoint to preserve system/user role structure.
+        # ollama.generate() concatenates prompts into a single string, which
+        # bypasses chat templates and causes instruct models (e.g. llama3.2)
+        # to misinterpret context and trigger safety refusals on survey questions.
+        response = ollama.chat(
             model=self.model_name,
-            prompt=full_prompt,
+            messages=[
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_prompt},
+            ],
             options=options
         )
 
         return {
-            'response': response['response'].strip(),
+            'response': response['message']['content'].strip(),
             'raw': response
         }
 

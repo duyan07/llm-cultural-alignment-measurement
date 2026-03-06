@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.prompts import QUESTIONS, SYSTEM_PROMPTS, format_full_prompt
+from src.prompts import QUESTIONS, TONES, format_full_prompt
 from config.models import MODELS, get_ollama_models, get_api_models
 import pandas as pd
 
@@ -81,12 +81,19 @@ def check_prompts():
 
     print("PASS: All questions have required fields")
 
-    # Check system prompts
-    if len(SYSTEM_PROMPTS) != 10:
-        print(f"FAIL: Expected 10 system prompt variants, found {len(SYSTEM_PROMPTS)}")
+    # Check tone system prompts
+    expected_tones = ['standard', 'friendly', 'combative']
+    missing_tones = [t for t in expected_tones if t not in TONES]
+    if missing_tones:
+        print(f"FAIL: Missing tones: {missing_tones}")
         return False
 
-    print(f"PASS: All 10 system prompt variants defined")
+    for tone_name, prompts in TONES.items():
+        if len(prompts) != 10:
+            print(f"FAIL: Tone '{tone_name}' expected 10 variants, found {len(prompts)}")
+            return False
+
+    print(f"PASS: All 3 tones defined, each with 10 prompt variants")
 
     # Test prompt formatting
     try:
@@ -171,7 +178,7 @@ def print_next_steps():
     print("="*60)
 
     print("\nTo finish Week 2, run:")
-    print("  1. python scripts/generate_baseline_cultural_map.py")
+    print("  1. python scripts/baseline/generate_cultural_map.py")
     print("     → Generates cultural map coordinates from IVS data")
     print("     → Creates baseline visualization")
     print("     → This is your 'ground truth' for comparison")
@@ -183,9 +190,11 @@ def print_next_steps():
     print("\nBefore starting Week 3, you'll need to:")
     print("  1. Install Ollama: https://ollama.ai")
     print("  2. Download models:")
-    print("     ollama pull gemma2:2b-instruct")
-    print("     ollama pull qwen2.5:1.5b-instruct")
+    print("     ollama pull gemma2:2b")
     print("     ollama pull phi3:mini")
+    print("     ollama pull qwen2.5:1.5b")
+    print("     ollama pull mistral:7b")
+    print("     ollama pull llama3.1:8b")
     print("  3. Set up API keys for OpenAI/Anthropic/Google")
 
 

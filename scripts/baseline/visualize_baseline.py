@@ -213,22 +213,23 @@ def create_visualization(baseline_df, models_df, output_path, tone='standard'):
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
-def print_summary(baseline_df, models_df, tone='standard'):
-    """Print a detailed summary: model positions, closest countries, quadrant context."""
-    print("\n" + "=" * 70)
-    print(f"BASELINE REPLICATION SUMMARY  [{tone.upper()} tone]")
-    print("=" * 70)
+def build_summary(baseline_df, models_df, tone='standard'):
+    """Build a detailed summary string: model positions, closest countries, quadrant context."""
+    lines = []
+    lines.append("\n" + "=" * 70)
+    lines.append(f"BASELINE REPLICATION SUMMARY  [{tone.upper()} tone]")
+    lines.append("=" * 70)
 
-    print(f"\nHuman Baseline ({len(baseline_df)} countries):")
-    print(f"  X range : [{baseline_df['survival_selfexpression'].min():.2f}, "
-          f"{baseline_df['survival_selfexpression'].max():.2f}]")
-    print(f"  Y range : [{baseline_df['traditional_secular'].min():.2f}, "
-          f"{baseline_df['traditional_secular'].max():.2f}]")
-    print(f"  Centroid: ({baseline_df['survival_selfexpression'].mean():.2f}, "
-          f"{baseline_df['traditional_secular'].mean():.2f})")
+    lines.append(f"\nHuman Baseline ({len(baseline_df)} countries):")
+    lines.append(f"  X range : [{baseline_df['survival_selfexpression'].min():.2f}, "
+                 f"{baseline_df['survival_selfexpression'].max():.2f}]")
+    lines.append(f"  Y range : [{baseline_df['traditional_secular'].min():.2f}, "
+                 f"{baseline_df['traditional_secular'].max():.2f}]")
+    lines.append(f"  Centroid: ({baseline_df['survival_selfexpression'].mean():.2f}, "
+                 f"{baseline_df['traditional_secular'].mean():.2f})")
 
-    print(f"\nLLM Models Tested: {len(models_df)}")
-    print("\n" + "-" * 70)
+    lines.append(f"\nLLM Models Tested: {len(models_df)}")
+    lines.append("\n" + "-" * 70)
 
     for _, model in models_df.iterrows():
         x = model['survival_selfexpression']
@@ -241,22 +242,31 @@ def print_summary(baseline_df, models_df, tone='standard'):
             distances.append((d, country['iso3'], country['name'], country['zone']))
         distances.sort()
 
-        print(f"\n  Model : {model['model']}  (tone: {model.get('tone', tone)})")
-        print(f"  Position  : ({x:.3f}, {y:.3f})")
-        print(f"  Quadrant  : {quadrant_label(x, y)}")
-        print(f"  Typical of: {typical_countries(x, y)}")
-        print(f"  Closest countries:")
+        lines.append(f"\n  Model : {model['model']}  (tone: {model.get('tone', tone)})")
+        lines.append(f"  Position  : ({x:.3f}, {y:.3f})")
+        lines.append(f"  Quadrant  : {quadrant_label(x, y)}")
+        lines.append(f"  Typical of: {typical_countries(x, y)}")
+        lines.append(f"  Closest countries:")
         for d, iso3, name, zone in distances[:5]:
-            print(f"    {iso3:3s}  {name:<20s}  d={d:.3f}  [{zone}]")
-        print(f"  Mean dist to all countries: {model.get('mean_distance', float('nan')):.3f}")
+            lines.append(f"    {iso3:3s}  {name:<20s}  d={d:.3f}  [{zone}]")
+        lines.append(f"  Mean dist to all countries: {model.get('mean_distance', float('nan')):.3f}")
 
-    print("\n" + "-" * 70)
+    lines.append("\n" + "-" * 70)
     avg_x = models_df['survival_selfexpression'].mean()
     avg_y = models_df['traditional_secular'].mean()
-    print(f"\nAverage model position: ({avg_x:.2f}, {avg_y:.2f})")
-    print(f"  Quadrant  : {quadrant_label(avg_x, avg_y)}")
-    print(f"  Typical of: {typical_countries(avg_x, avg_y)}")
-    print(f"\nPNAS Reference (GPT-4o): (3.35, 0.50) — closest: Finland (d≈0.20)")
+    lines.append(f"\nAverage model position: ({avg_x:.2f}, {avg_y:.2f})")
+    lines.append(f"  Quadrant  : {quadrant_label(avg_x, avg_y)}")
+    lines.append(f"  Typical of: {typical_countries(avg_x, avg_y)}")
+    lines.append(f"\nPNAS Reference (GPT-4o): (3.35, 0.50) — closest: Finland (d≈0.20)")
+
+    return "\n".join(lines)
+
+
+def print_summary(baseline_df, models_df, tone='standard'):
+    """Print and return the summary string."""
+    text = build_summary(baseline_df, models_df, tone=tone)
+    print(text)
+    return text
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -276,8 +286,11 @@ def main():
         tone = args.tone or detected_tone
         output_path = (Path(args.output) if args.output else
                        OUTPUTS_DIR / f"baseline_with_models_{tone}_{timestamp}.png")
+        summary_path = output_path.with_suffix('.txt')
         create_visualization(baseline_df, models_df, output_path, tone=tone)
-        print_summary(baseline_df, models_df, tone=tone)
+        text = print_summary(baseline_df, models_df, tone=tone)
+        summary_path.write_text(text)
+        print(f"Saved: {summary_path}")
         print(f"\nDone. Image saved to: {output_path}")
     else:
         # Default: generate a map for every tone that has results
@@ -286,8 +299,11 @@ def main():
             try:
                 models_df, _, timestamp = load_model_results(tone=tone)
                 output_path = OUTPUTS_DIR / f"baseline_with_models_{tone}_{timestamp}.png"
+                summary_path = output_path.with_suffix('.txt')
                 create_visualization(baseline_df, models_df, output_path, tone=tone)
-                print_summary(baseline_df, models_df, tone=tone)
+                text = print_summary(baseline_df, models_df, tone=tone)
+                summary_path.write_text(text)
+                print(f"Saved: {summary_path}")
                 generated.append(str(output_path))
             except FileNotFoundError:
                 print(f"Skipping '{tone}' tone — no results file found.")

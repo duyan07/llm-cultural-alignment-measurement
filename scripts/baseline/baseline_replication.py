@@ -263,12 +263,13 @@ class BaselineReplicator:
         print(f"Tones to test:  {tones}\n")
 
         # Results keyed by tone
-        all_results = {tone: {'models': [], 'responses': [], 'distances': []} for tone in tones}
+        all_results = {tone: {'models': [], 'responses': [], 'distances': [], 'summary': []} for tone in tones}
 
         for tone in tones:
             print(f"\n{'#'*70}")
             print(f"# TONE: {tone.upper()}")
             print(f"{'#'*70}")
+            all_results[tone]['summary'].append(f"{'#'*70}\n# TONE: {tone.upper()}\n{'#'*70}\n")
 
             for model_name in self.models_to_test:
                 try:
@@ -308,30 +309,44 @@ class BaselineReplicator:
                         distances_df['tone'] = tone
                         all_results[tone]['distances'].append(distances_df)
 
-                        # ── Per-model summary ──────────────────────────────
-                        print(f"\n  ┌─ {model_name}  [{tone}]")
-                        print(f"  │  Position : ({x:.3f}, {y:.3f})")
-                        print(f"  │  Quadrant : {quadrant_label(x, y)}")
-                        print(f"  │  Typical  : {typical_countries(x, y)}")
-                        print(f"  │  Mean dist to all countries: {mean_dist:.3f}")
-                        print(f"  │  Top-5 closest countries:")
-                        for _, row in top.iterrows():
-                            print(f"  │    {row['iso3']:3s}  {row['name']:<20s}"
-                                  f"  d={row['distance']:.3f}  [{row['zone']}]")
+                        # ── Per-model summary (printed + accumulated for file) ──
                         refused = [(qid, r) for qid, r in refusal_rates.items() if r > 0]
+                        lines = [
+                            f"\n  ┌─ {model_name}  [{tone}]",
+                            f"  │  Position : ({x:.3f}, {y:.3f})",
+                            f"  │  Quadrant : {quadrant_label(x, y)}",
+                            f"  │  Typical  : {typical_countries(x, y)}",
+                            f"  │  Mean dist to all countries: {mean_dist:.3f}",
+                            f"  │  Top-5 closest countries:",
+                        ]
+                        for _, row in top.iterrows():
+                            lines.append(f"  │    {row['iso3']:3s}  {row['name']:<20s}"
+                                         f"  d={row['distance']:.3f}  [{row['zone']}]")
                         if refused:
-                            print(f"  │  Refusals: " +
-                                  "  ".join(f"{qid}={r*100:.0f}%" for qid, r in refused))
-                        print(f"  └─────────────────────────────────────────")
+                            lines.append("  │  Refusals: " +
+                                         "  ".join(f"{qid}={r*100:.0f}%" for qid, r in refused))
+                        lines.append("  └─────────────────────────────────────────")
+                        for line in lines:
+                            print(line)
+                        all_results[tone]['summary'].extend(lines)
+
+                    else:
+                        skipped = f"\n  ✗ {model_name} [{tone}] — skipped (missing question responses)"
+                        print(skipped)
+                        all_results[tone]['summary'].append(skipped)
 
                 except Exception as e:
-                    print(f"\n  Error ({model_name}, tone={tone}): {e}")
+                    err = f"\n  Error ({model_name}, tone={tone}): {e}"
+                    print(err)
+                    all_results[tone]['summary'].append(err)
 
         return all_results
 
     def save_results(self, all_results):
-        """Save results to CSV files, one set per tone."""
+        """Save results to CSV files and a human-readable summary, one set per tone."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        outputs_dir = Path("outputs")
+        outputs_dir.mkdir(parents=True, exist_ok=True)
 
         for tone, results in all_results.items():
             if results['models']:
@@ -345,6 +360,22 @@ class BaselineReplicator:
                 path = RESULTS_DIR / f"baseline_distances_{tone}_{timestamp}.csv"
                 distances_df.to_csv(path, index=False)
                 print(f"Saved: {path}")
+
+        # Write combined plain-text summary — filename includes the tones that were run
+        tones_run = "_".join(all_results.keys())
+        summary_path = outputs_dir / f"baseline_summary_{tones_run}_{timestamp}.txt"
+        header = (
+            f"Baseline Replication Summary\n"
+            f"Run   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Tones : {list(all_results.keys())}\n"
+            f"Models: {self.models_to_test}\n"
+            f"{'='*70}\n"
+        )
+        all_lines = [header]
+        for results in all_results.values():
+            all_lines.extend(results['summary'])
+        summary_path.write_text("\n".join(all_lines))
+        print(f"Saved: {summary_path}")
 
         self.logger.print_stats()
 

@@ -80,6 +80,7 @@ python scripts/baseline/baseline_replication.py --models llama3.1:8b --tones com
 - `data/results/baseline_models_{tone}_{timestamp}.csv` — model positions and closest country
 - `data/results/baseline_distances_{tone}_{timestamp}.csv` — distance from each model to all 88 countries
 - `logs/queries_{timestamp}.jsonl` — full query/response log
+- `outputs/baseline_summary_{timestamp}.txt` — human-readable findings summary across all tones
 
 **Requires:** `data/processed/cultural_map_coordinates.csv` and `data/processed/ivs_2005-2022.csv`
 
@@ -114,11 +115,9 @@ python scripts/baseline/visualize_baseline.py --tone standard --output outputs/m
 | `--results` | Path to a specific `baseline_models_*.csv` file | `--results data/results/baseline_models_standard_20260301_120000.csv` |
 | `--output` | Override default output image path | `--output outputs/custom.png` |
 
-**Outputs:**
-- `outputs/baseline_with_models_{tone}_{timestamp}.png` — cultural map with LLM positions (timestamp matches the source results file)
-
-**Stdout summary includes** (per model): position (x, y), quadrant, typical region, top-5 closest
-countries with ISO-3 code, full name, distance, and cultural zone.
+**Outputs (per tone):**
+- `outputs/baseline_with_models_{tone}_{timestamp}.png` — cultural map with LLM positions
+- `outputs/baseline_with_models_{tone}_{timestamp}.txt` — summary text: positions, quadrant, top-5 closest countries, average model position
 
 **Requires:** `data/results/baseline_models_*.csv` (run Stage 3 querying first)
 

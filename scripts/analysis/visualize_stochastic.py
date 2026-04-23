@@ -7,6 +7,9 @@ generates two figures:
 1. Per-question response distributions (strip / bar plots per question)
 2. Stability summary — mode consistency across questions and models
 
+By default, merges ALL stochastic_flat_*.csv files in data/results/stochastic/
+so that results from separate runs (different models) are combined automatically.
+
 Usage:
     python scripts/analysis/visualize_stochastic.py
     python scripts/analysis/visualize_stochastic.py --flat data/results/stochastic/stochastic_flat_<ts>.csv
@@ -45,16 +48,64 @@ NUMERIC_QUESTIONS = {'A008', 'E018', 'F063', 'F118', 'F120', 'G006'}
 CATEGORICAL_QUESTIONS = {'A165', 'E025'}
 MULTI_QUESTIONS = {'Y002', 'Y003'}
 
+# Parameter counts for display labels. Add new models here as needed.
+MODEL_PARAMS = {
+    'gemma2:2b':            '2B',
+    'phi3:mini':            '3.8B',
+    'qwen2.5:1.5b':         '1.5B',
+    'qwen2.5:3b':           '3B',
+    'qwen2.5:7b':           '7B',
+    'mistral:7b':           '7B',
+    'llama3.1:8b':          '8B',
+    'yi:6b':                '6B',
+    'salmatrafi/acegpt:7b': '7B',
+}
+
+
+def model_label(name: str) -> str:
+    """Short display label with parameter count, e.g. 'qwen2.5 (7B)'."""
+    short = name.split('/')[-1].split(':')[0]   # e.g. 'qwen2.5', 'gemma2'
+    params = MODEL_PARAMS.get(name)
+    return f"{short}\n({params})" if params else short
+
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
-def latest_files():
-    """Return most recently created flat + summary CSV pair."""
-    flats = sorted(RESULTS_DIR.glob("stochastic_flat_*.csv"))
-    summaries = sorted(RESULTS_DIR.glob("stochastic_summary_*.csv"))
-    if not flats:
-        raise FileNotFoundError(f"No stochastic_flat_*.csv in {RESULTS_DIR}")
-    return flats[-1], summaries[-1]
+def _filter_by_model_set(paths, model_set):
+    """Keep only paths containing _{model_set}_ if model_set is specified."""
+    if not model_set:
+        return paths
+    return [p for p in paths if f'_{model_set}_' in p.name]
+
+
+def load_all_data(flat_path=None, model_set=None):
+    """
+    Load and merge flat results.
+
+    If flat_path is given, load only that file.
+    Otherwise merge stochastic_flat_*.csv files in RESULTS_DIR.
+    Pass model_set='open'/'all' to restrict to files from that run type.
+    """
+    if flat_path:
+        paths = [Path(flat_path)]
+    else:
+        paths = sorted(RESULTS_DIR.glob("stochastic_flat_*.csv"))
+        paths = _filter_by_model_set(paths, model_set)
+        if not paths:
+            tag = f" matching model_set='{model_set}'" if model_set else ""
+            raise FileNotFoundError(f"No stochastic_flat_*.csv{tag} in {RESULTS_DIR}")
+
+    frames = [pd.read_csv(p) for p in paths]
+    df = pd.concat(frames, ignore_index=True)
+
+    # Drop duplicate (model, tone, variant, question_id, seed) rows that could
+    # appear if the same model was re-run — keep the most recent occurrence.
+    key_cols = ['model', 'tone', 'variant', 'question_id', 'seed']
+    df = df.drop_duplicates(subset=key_cols, keep='last')
+
+    print(f"Loaded {len(paths)} file(s) — {len(df)} rows, "
+          f"{df['model'].nunique()} models: {sorted(df['model'].unique())}")
+    return df
 
 
 def parse_value(v):
@@ -85,8 +136,10 @@ def plot_distributions(flat_df: pd.DataFrame, model: str, tone: str, variant: in
     fig, axes = plt.subplots(2, 5, figsize=(18, 8))
     axes = axes.flatten()
 
+    params = MODEL_PARAMS.get(model, '')
+    params_str = f" ({params})" if params else ""
     fig.suptitle(
-        f"Response Distributions — {model}  |  tone={tone}  variant={variant}\n"
+        f"Response Distributions — {model}{params_str}  |  tone={tone}  variant={variant}\n"
         f"(10 seeds, temperature=1.0)",
         fontsize=13, fontweight='bold', y=1.01
     )
@@ -229,7 +282,7 @@ def plot_stability_summary(summary_df: pd.DataFrame, out_path: Path) -> None:
                    cmap='RdYlGn', vmin=0, vmax=1)
 
     ax.set_xticks(range(len(pivot.columns)))
-    ax.set_xticklabels([c.split(':')[0] for c in pivot.columns],
+    ax.set_xticklabels([model_label(c) for c in pivot.columns],
                        rotation=30, ha='right', fontsize=9)
     ax.set_yticks(range(len(pivot.index)))
     ax.set_yticklabels([QUESTION_LABELS.get(q, q).replace('\n', ' ')
@@ -258,32 +311,50 @@ def plot_stability_summary(summary_df: pd.DataFrame, out_path: Path) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description='Visualize stochastic sensitivity results.')
-    parser.add_argument('--flat', type=Path, help='Path to stochastic_flat_*.csv')
-    parser.add_argument('--summary', type=Path, help='Path to stochastic_summary_*.csv')
+    parser.add_argument(
+        '--model-set', choices=['all', 'open'], default=None,
+        help='Filter to files from a specific model-set run (default: merge all files)'
+    )
+    parser.add_argument('--flat', type=Path,
+                        help='Single flat CSV to load; overrides --model-set')
     parser.add_argument('--tone', default='standard', help='Tone to plot (default: standard)')
     parser.add_argument('--variant', type=int, default=0, help='Variant index to plot (default: 0)')
     args = parser.parse_args()
 
-    flat_path, summary_path = (args.flat, args.summary) if args.flat else latest_files()
-
-    print(f"Reading: {flat_path}")
-    flat_df = pd.read_csv(flat_path)
-    summary_df = pd.read_csv(summary_path)
+    flat_df = load_all_data(args.flat, model_set=args.model_set)
+    ms_tag = f"_{args.model_set}" if args.model_set else ''
 
     models = flat_df['model'].unique()
-    print(f"Models found: {list(models)}")
-
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    ts = flat_path.stem.replace('stochastic_flat_', '')
+    ts = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
 
     # Figure 1: per-question distributions for each model
     for model in models:
         safe_model = model.replace('/', '_').replace(':', '_')
-        out = OUTPUTS_DIR / f"distributions_{safe_model}_{args.tone}_v{args.variant}_{ts}.png"
+        out = OUTPUTS_DIR / f"distributions_{safe_model}_{args.tone}_v{args.variant}{ms_tag}_{ts}.png"
         plot_distributions(flat_df, model, args.tone, args.variant, out)
 
-    # Figure 2: stability summary heatmap (all models)
-    out2 = OUTPUTS_DIR / f"stability_summary_{ts}.png"
+    # Figure 2: stability summary heatmap (all models) — recomputed from merged flat data
+    # We recompute mode_consistency directly rather than relying on summary CSVs,
+    # which may not exist for all runs or may cover different model sets.
+    import math
+    from collections import Counter
+
+    summary_rows = []
+    for (model, tone, variant, qid), grp in flat_df.groupby(
+            ['model', 'tone', 'variant', 'question_id']):
+        values = [parse_value(v) for v in grp['parsed_value']]
+        valid = [v for v in values if v is not None]
+        if not valid:
+            mc = float('nan')
+        else:
+            counts = Counter(str(v) for v in valid)
+            mc = counts.most_common(1)[0][1] / len(valid)
+        summary_rows.append({'model': model, 'tone': tone, 'variant': variant,
+                              'question_id': qid, 'mode_consistency': mc})
+
+    summary_df = pd.DataFrame(summary_rows)
+    out2 = OUTPUTS_DIR / f"stability_summary{ms_tag}_{ts}.png"
     plot_stability_summary(summary_df, out2)
 
 

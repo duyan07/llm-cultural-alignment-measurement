@@ -38,8 +38,8 @@ from src.geo_data import (
 # Paths
 BASELINE_PATH = Path("data/processed/cultural_map_coordinates.csv")
 IVS_PATH = Path("data/processed/ivs_2005-2022.csv")
-RESULTS_DIR = Path("data/results")
-OUTPUTS_DIR = Path("outputs")
+RESULTS_DIR = Path("data/results/baseline")
+OUTPUTS_DIR = Path("outputs/baseline")
 
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -54,8 +54,13 @@ def load_baseline():
     return df
 
 
-def load_model_results(results_path=None, tone=None):
+def load_model_results(results_path=None, tone=None, model_set=None):
     """Load model results — from a specific file, by tone, or from the most recent run.
+
+    Args:
+        results_path: Explicit CSV path; bypasses all filtering.
+        tone: Tone to load (standard/friendly/combative).
+        model_set: If given, only load files whose name contains _{model_set}_.
 
     Returns (models_df, tone, timestamp) where timestamp matches the source filename.
     """
@@ -65,19 +70,32 @@ def load_model_results(results_path=None, tone=None):
 
     pattern = f"baseline_models_{tone}_*.csv" if tone else "baseline_models_*.csv"
     files = sorted(glob(str(RESULTS_DIR / pattern)))
+    files = _filter_by_model_set([Path(f) for f in files], model_set)
     if not files:
+        tag = f" with model_set='{model_set}'" if model_set else ""
         raise FileNotFoundError(
-            f"No baseline results found matching '{pattern}'. "
+            f"No baseline results found matching '{pattern}'{tag}. "
             "Run scripts/baseline/baseline_replication.py first."
         )
-    results_path = files[-1]
+    results_path = str(files[-1])
     print(f"Loading results from: {results_path}")
     return pd.read_csv(results_path), _tone_from_path(results_path), _timestamp_from_path(results_path)
 
 
+def _filter_by_model_set(paths, model_set):
+    """Keep only paths containing _{model_set}_ if model_set is specified."""
+    if not model_set:
+        return paths
+    return [p for p in paths if f'_{model_set}_' in p.name]
+
+
 def _tone_from_path(path):
-    """Extract tone name from a result filename, e.g. baseline_models_friendly_*.csv -> 'friendly'."""
-    m = re.search(r'baseline_models_([a-z]+)_\d{8}', str(path))
+    """Extract tone name from a result filename.
+
+    Handles both old format (baseline_models_standard_20260306.csv)
+    and new format (baseline_models_standard_all_20260422.csv).
+    """
+    m = re.search(r'baseline_models_([a-z]+)_', str(path))
     return m.group(1) if m else 'standard'
 
 
@@ -273,19 +291,26 @@ def print_summary(baseline_df, models_df, tone='standard'):
 
 def main():
     parser = argparse.ArgumentParser(description='Visualize baseline replication')
+    parser.add_argument(
+        '--model-set', choices=['all', 'open', 'api'], default=None,
+        help='Filter results by model set (default: load all available files)'
+    )
     parser.add_argument('--results', help='Path to a specific baseline_models_*.csv')
     parser.add_argument('--tone', help='Tone to load (standard/friendly/combative)')
     parser.add_argument('--output', help='Override output image path (single-tone only)')
     args = parser.parse_args()
 
     baseline_df = load_baseline()
+    ms = args.model_set
+    ms_tag = f"_{ms}" if ms else ''
 
     if args.results or args.tone:
         # Single-file or single-tone mode
-        models_df, detected_tone, timestamp = load_model_results(args.results, args.tone)
+        models_df, detected_tone, timestamp = load_model_results(
+            args.results, args.tone, model_set=ms)
         tone = args.tone or detected_tone
         output_path = (Path(args.output) if args.output else
-                       OUTPUTS_DIR / f"baseline_with_models_{tone}_{timestamp}.png")
+                       OUTPUTS_DIR / f"baseline_with_models_{tone}{ms_tag}_{timestamp}.png")
         summary_path = output_path.with_suffix('.txt')
         create_visualization(baseline_df, models_df, output_path, tone=tone)
         text = print_summary(baseline_df, models_df, tone=tone)
@@ -297,8 +322,8 @@ def main():
         generated = []
         for tone in ['standard', 'friendly', 'combative']:
             try:
-                models_df, _, timestamp = load_model_results(tone=tone)
-                output_path = OUTPUTS_DIR / f"baseline_with_models_{tone}_{timestamp}.png"
+                models_df, _, timestamp = load_model_results(tone=tone, model_set=ms)
+                output_path = OUTPUTS_DIR / f"baseline_with_models_{tone}{ms_tag}_{timestamp}.png"
                 summary_path = output_path.with_suffix('.txt')
                 create_visualization(baseline_df, models_df, output_path, tone=tone)
                 text = print_summary(baseline_df, models_df, tone=tone)

@@ -158,7 +158,7 @@ DEFAULT_PARAMS = {
     'presence_penalty': 0.0,
 }
 
-# For stochastic sensitivity testing (Week 7)
+# For stochastic sensitivity testing (Stage 3)
 STOCHASTIC_PARAMS = {
     'temperature': 1.0,
     'seeds': list(range(10)),  # 10 different seeds

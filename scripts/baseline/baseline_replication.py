@@ -5,13 +5,21 @@ Replicates PNAS Figure 1 by querying LLMs with IVS questions
 and plotting them on the cultural map.
 
 Usage:
+    # All models — Ollama + any API keys set (default)
     python scripts/baseline/baseline_replication.py
 
-    # Or with specific models:
+    # Open/local models only
+    python scripts/baseline/baseline_replication.py --model-set open
+
+    # Proprietary API models only (requires OPENAI_API_KEY / ANTHROPIC_API_KEY)
+    python scripts/baseline/baseline_replication.py --model-set api
+
+    # Specific models (overrides --model-set)
     python scripts/baseline/baseline_replication.py --models gemma2:2b qwen2.5:1.5b
 """
 
 import sys
+import os
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -27,19 +35,37 @@ from src.prompts import QUESTIONS, TONES, format_full_prompt
 from src.cultural_map import CulturalMapGenerator
 from src.geo_data import COUNTRY_NAMES, ISO3_TO_ZONE, load_iso3_lookup, quadrant_label, typical_countries
 
+PROPRIETARY_MODELS = {
+    'gpt-4o':            'openai',
+    'gpt-4-turbo':       'openai',
+    'claude-sonnet-4-5': 'anthropic',
+}
+
 # Paths
 BASELINE_PATH = Path("data/processed/cultural_map_coordinates.csv")
 IVS_PATH = Path("data/processed/ivs_2005-2022.csv")
-RESULTS_DIR = Path("data/results")
-LOGS_DIR = Path("logs")
+RESULTS_DIR = Path("data/results/baseline")
+LOGS_DIR = Path("logs/baseline")
 
 
 class BaselineReplicator:
     """Replicates PNAS baseline by querying models without cultural prompting."""
 
-    def __init__(self, models_to_test=None):
-        """Initialize replicator."""
-        self.models_to_test = models_to_test or self._get_default_models()
+    def __init__(self, model_set='all', models_to_test=None):
+        """Initialize replicator.
+
+        Args:
+            model_set: 'all' (default) runs open + API models, 'open' runs
+                       Ollama-only, 'api' runs proprietary models only.
+            models_to_test: Explicit list of Ollama model names; overrides
+                            model_set when provided.
+        """
+        self.model_set = model_set
+        self.models = (
+            [(m, 'ollama') for m in models_to_test]
+            if models_to_test is not None
+            else self._build_model_list()
+        )
 
         # Create output directories
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -61,22 +87,54 @@ class BaselineReplicator:
         self.pca_generator = self._load_pca_transformation()
         print("  PCA loaded successfully\n")
 
-    def _get_default_models(self):
-        """Get list of local Ollama models to test."""
+    def _build_model_list(self):
+        """Build (model_name, provider) list based on model_set."""
+        models = []
+        if self.model_set in ('all', 'open'):
+            models += self._get_ollama_models()
+        if self.model_set in ('all', 'api'):
+            models += self._get_api_models()
+        if not models:
+            print(f"Warning: no models found for --model-set '{self.model_set}'")
+        return models
+
+    def _get_ollama_models(self):
         try:
             import ollama
-            models = ollama.list()
-            model_names = [m['model'] for m in models.get('models', [])]
-            print(f"Found {len(model_names)} local Ollama models")
-            return model_names
-        except:
-            print("No Ollama models found, using default list")
-            return [
-                'gemma2:2b', 'phi3:mini',
-                'qwen2.5:1.5b', 'qwen2.5:3b', 'qwen2.5:7b',
-                'mistral:7b', 'llama3.1:8b', 'yi:6b',
-                'salmatrafi/acegpt:7b',
-            ]
+            names = [m['model'] for m in ollama.list().get('models', [])]
+            print(f"Discovered {len(names)} Ollama models: {names}")
+            return [(n, 'ollama') for n in names]
+        except Exception as e:
+            print(f"Could not auto-detect Ollama models: {e}")
+            return []
+
+    def _get_api_models(self):
+        available = []
+        for model, provider in PROPRIETARY_MODELS.items():
+            if provider == 'openai' and os.getenv('OPENAI_API_KEY'):
+                available.append((model, provider))
+            elif provider == 'anthropic' and os.getenv('ANTHROPIC_API_KEY'):
+                available.append((model, provider))
+        if available:
+            print(f"API models available: {[m for m, _ in available]}")
+        elif self.model_set == 'api':
+            print("Warning: --model-set api requested but no API keys found "
+                  "(set OPENAI_API_KEY / ANTHROPIC_API_KEY)")
+        return available
+
+    def _make_wrapper(self, model_name: str, provider: str):
+        kwargs = dict(model_name=model_name, temperature=0.0)
+        if provider == 'openai':
+            kwargs['provider'] = 'openai'
+            kwargs['seed'] = 42
+            kwargs['api_key'] = os.getenv('OPENAI_API_KEY')
+        elif provider == 'anthropic':
+            kwargs['provider'] = 'anthropic'
+            kwargs['api_key'] = os.getenv('ANTHROPIC_API_KEY')
+        else:
+            kwargs['provider'] = 'ollama'
+            kwargs['seed'] = 42
+        return LLMQueryWrapper(**kwargs)
 
     def _load_pca_transformation(self):
         """Load PCA transformation from baseline generation."""
@@ -91,13 +149,7 @@ class BaselineReplicator:
         print(f"Querying {model_name} (provider: {provider}, tone: {tone})")
         print(f"{'='*70}")
 
-        # Create wrapper
-        wrapper = LLMQueryWrapper(
-            provider=provider,
-            model_name=model_name,
-            temperature=0.0,
-            seed=42
-        )
+        wrapper = self._make_wrapper(model_name, provider)
 
         tone_prompts = TONES[tone]
         results = []
@@ -259,7 +311,8 @@ class BaselineReplicator:
         print("\n" + "="*70)
         print("BASELINE REPLICATION")
         print("="*70)
-        print(f"\nModels to test: {self.models_to_test}")
+        print(f"\nModels to test: {[m for m, _ in self.models]}")
+        print(f"Model set:      {self.model_set}")
         print(f"Tones to test:  {tones}\n")
 
         # Results keyed by tone
@@ -271,9 +324,9 @@ class BaselineReplicator:
             print(f"{'#'*70}")
             all_results[tone]['summary'].append(f"{'#'*70}\n# TONE: {tone.upper()}\n{'#'*70}\n")
 
-            for model_name in self.models_to_test:
+            for model_name, provider in self.models:
                 try:
-                    responses_df = self.query_model_baseline(model_name, tone=tone)
+                    responses_df = self.query_model_baseline(model_name, provider=provider, tone=tone)
                     x, y = self.calculate_model_coordinates(responses_df, model_name)
 
                     # Per-question refusal rates (always computed, regardless of mappability)
@@ -351,24 +404,25 @@ class BaselineReplicator:
         for tone, results in all_results.items():
             if results['models']:
                 models_df = pd.DataFrame(results['models'])
-                path = RESULTS_DIR / f"baseline_models_{tone}_{timestamp}.csv"
+                path = RESULTS_DIR / f"baseline_models_{tone}_{self.model_set}_{timestamp}.csv"
                 models_df.to_csv(path, index=False)
                 print(f"\nSaved: {path}")
 
             if results['distances']:
                 distances_df = pd.concat(results['distances'], ignore_index=True)
-                path = RESULTS_DIR / f"baseline_distances_{tone}_{timestamp}.csv"
+                path = RESULTS_DIR / f"baseline_distances_{tone}_{self.model_set}_{timestamp}.csv"
                 distances_df.to_csv(path, index=False)
                 print(f"Saved: {path}")
 
-        # Write combined plain-text summary — filename includes the tones that were run
+        # Write combined plain-text summary — filename includes tones and model_set
         tones_run = "_".join(all_results.keys())
-        summary_path = outputs_dir / f"baseline_summary_{tones_run}_{timestamp}.txt"
+        summary_path = outputs_dir / f"baseline_summary_{tones_run}_{self.model_set}_{timestamp}.txt"
         header = (
             f"Baseline Replication Summary\n"
-            f"Run   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"Tones : {list(all_results.keys())}\n"
-            f"Models: {self.models_to_test}\n"
+            f"Run       : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Model set : {self.model_set}\n"
+            f"Tones     : {list(all_results.keys())}\n"
+            f"Models    : {[m for m, _ in self.models]}\n"
             f"{'='*70}\n"
         )
         all_lines = [header]
@@ -382,12 +436,22 @@ class BaselineReplicator:
 
 def main():
     parser = argparse.ArgumentParser(description='Baseline Replication')
-    parser.add_argument('--models', nargs='+', help='Models to test')
+    parser.add_argument(
+        '--model-set', choices=['all', 'open', 'api'], default='all',
+        help='all=open+API (default), open=Ollama only, api=proprietary only'
+    )
+    parser.add_argument(
+        '--models', nargs='+',
+        help='Explicit Ollama model names; overrides --model-set'
+    )
     parser.add_argument('--tones', nargs='+', choices=list(TONES.keys()),
                         help='Tones to test (default: all)')
     args = parser.parse_args()
 
-    replicator = BaselineReplicator(models_to_test=args.models)
+    replicator = BaselineReplicator(
+        model_set=args.model_set,
+        models_to_test=args.models,
+    )
     all_results = replicator.run(tones=args.tones)
     replicator.save_results(all_results)
 

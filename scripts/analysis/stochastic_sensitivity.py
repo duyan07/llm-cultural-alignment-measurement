@@ -1,17 +1,25 @@
 """
-Stochastic Sensitivity Analysis
+Stochastic Sensitivity Analysis  (Stage 3)
 
-For each (model, question, variant) tuple, runs the same prompt 10 times
-with different random seeds, holding temperature fixed. This measures how
-much model responses vary due to sampling randomness alone.
+For each (model, question) pair, runs the same prompt 10 times with different
+random seeds, holding tone, variant, and temperature fixed. This isolates
+sampling randomness as the sole source of variance.
 
-Only runs on open/local Ollama models — closed APIs don't expose seed control.
+Tone and variant are intentionally fixed (standard, variant 0) so that results
+are not conflated with prompt wording sensitivity — that is measured separately
+in the Stage 4 prompt sensitivity analysis.
+
+Only Ollama (open) models are supported — seed control requires a local runtime.
 
 Usage:
+    # All open models auto-detected (default)
     python scripts/analysis/stochastic_sensitivity.py
+
+    # Open models only (same as default for this script)
+    python scripts/analysis/stochastic_sensitivity.py --model-set open
+
+    # Specific models (overrides --model-set)
     python scripts/analysis/stochastic_sensitivity.py --models gemma2:2b qwen2.5:1.5b
-    python scripts/analysis/stochastic_sensitivity.py --temperature 0.7 --seeds 0 1 2 3 4 5 6 7 8 9
-    python scripts/analysis/stochastic_sensitivity.py --tones standard --variants 0
 """
 
 import sys
@@ -122,6 +130,10 @@ def compute_distribution_stats(parsed_values: list, question_info: dict) -> dict
 class StochasticSensitivityRunner:
     """
     Runs each prompt N times with different seeds to measure response variance.
+
+    Note: only Ollama models are supported — seed control requires a local
+    runtime. Proprietary APIs do not expose seed parameters, so --model-set api
+    is not applicable here.
     """
 
     def __init__(self,
@@ -129,12 +141,16 @@ class StochasticSensitivityRunner:
                  seeds: List[int] = DEFAULT_SEEDS,
                  temperature: float = DEFAULT_TEMPERATURE,
                  tones: Optional[List[str]] = None,
-                 variants: Optional[List[int]] = None):
-        self.models = models or self._discover_ollama_models()
+                 variants: Optional[List[int]] = None,
+                 model_set: str = 'all'):
+        self.model_set = model_set
+        self.models = models if models is not None else self._build_model_list()
         self.seeds = seeds
         self.temperature = temperature
-        self.tones = tones or list(TONES.keys())
-        self.variants = variants if variants is not None else list(range(10))
+        # Fixed to one tone and variant — prompt wording is held constant so that
+        # only seed variation is measured. Cross-prompt sensitivity is Stage 4's job.
+        self.tones = tones or ['standard']
+        self.variants = variants if variants is not None else [0]
 
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -150,6 +166,13 @@ class StochasticSensitivityRunner:
               f"× {len(self.seeds)} seeds = {total} queries\n")
 
     # ── Model discovery ──────────────────────────────────────────────────────
+
+    def _build_model_list(self) -> List[str]:
+        if self.model_set == 'api':
+            print("Warning: --model-set api is not supported for stochastic "
+                  "sensitivity (seed control requires Ollama). No models loaded.")
+            return []
+        return self._discover_ollama_models()
 
     def _discover_ollama_models(self) -> List[str]:
         """Auto-detect local Ollama models."""
@@ -186,13 +209,13 @@ class StochasticSensitivityRunner:
         df = pd.DataFrame(all_rows)
 
         # Save flat results
-        flat_path = RESULTS_DIR / f"stochastic_flat_{self.timestamp}.csv"
+        flat_path = RESULTS_DIR / f"stochastic_flat_{self.model_set}_{self.timestamp}.csv"
         df.to_csv(flat_path, index=False)
         print(f"\nSaved flat results: {flat_path}")
 
         # Compute and save distribution summary
         summary_df = self._compute_summary(df)
-        summary_path = RESULTS_DIR / f"stochastic_summary_{self.timestamp}.csv"
+        summary_path = RESULTS_DIR / f"stochastic_summary_{self.model_set}_{self.timestamp}.csv"
         summary_df.to_csv(summary_path, index=False)
         print(f"Saved distribution summary: {summary_path}")
 
@@ -363,8 +386,12 @@ def main():
     parser = argparse.ArgumentParser(
         description='Stochastic sensitivity: run each prompt with N seeds.'
     )
+    parser.add_argument(
+        '--model-set', choices=['all', 'open'], default='all',
+        help='all/open=Ollama only (default: all); api not supported — seed control requires Ollama'
+    )
     parser.add_argument('--models', nargs='+',
-                        help='Ollama model names (default: auto-detect all)')
+                        help='Explicit Ollama model names; overrides --model-set')
     parser.add_argument('--seeds', nargs='+', type=int,
                         default=DEFAULT_SEEDS,
                         help=f'Seeds to use (default: {DEFAULT_SEEDS})')
@@ -373,9 +400,9 @@ def main():
                         help=f'Sampling temperature (default: {DEFAULT_TEMPERATURE})')
     parser.add_argument('--tones', nargs='+',
                         choices=list(TONES.keys()),
-                        help='Tones to test (default: all)')
+                        help='Override tone (default: standard only)')
     parser.add_argument('--variants', nargs='+', type=int,
-                        help='Variant indices to test (default: all 0-9)')
+                        help='Override variant indices (default: 0 only)')
     args = parser.parse_args()
 
     runner = StochasticSensitivityRunner(
@@ -384,6 +411,7 @@ def main():
         temperature=args.temperature,
         tones=args.tones,
         variants=args.variants,
+        model_set=args.model_set,
     )
     runner.run()
 

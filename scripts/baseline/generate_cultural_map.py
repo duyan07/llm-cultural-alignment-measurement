@@ -21,9 +21,8 @@ from src.cultural_map import CulturalMapGenerator
 
 # File paths
 IVS_PATH = Path("data/processed/ivs_2005-2022.csv")
-OUTPUT_DIR = Path("data/processed/")
-COORDS_OUTPUT = OUTPUT_DIR / "cultural_map_coordinates.csv"
-VIZ_OUTPUT = OUTPUT_DIR / "cultural_map_baseline.png"
+COORDS_OUTPUT = Path("data/processed/cultural_map_coordinates.csv")
+VIZ_OUTPUT = Path("outputs/baseline/cultural_map_baseline.png")
 
 
 def load_ivs_data():
@@ -139,7 +138,8 @@ def main():
     coords_df = generator.fit()
 
     # Save coordinates
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    COORDS_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    VIZ_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     generator.save_coordinates(COORDS_OUTPUT)
 
     # Print summary

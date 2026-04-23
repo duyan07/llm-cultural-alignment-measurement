@@ -4,216 +4,174 @@ All commands are run from the **project root** so that relative `Path("data/..."
 
 ---
 
-## Main Pipeline
-
-The full pipeline runs in three ordered stages: data preparation → baseline generation → querying & visualization.
-
-### Stage 1 — Data Preparation
-
-#### Build IVS Dataset
-**File:** [scripts/data/build_ivs.py](scripts/data/build_ivs.py)
-
-Merges WVS waves 5–7 and EVS waves 4–5 (2005–2022) into a single processed dataset.
-Reads from `data/raw/csv/` and writes `data/processed/ivs_2005-2022.csv`.
+## Stage 0 — Data Preparation (one-time)
 
 ```bash
+# Convert raw .sav files to CSV (requires R)
+Rscript scripts/data/convert_sav.R
+
+# Merge WVS + EVS into a single IVS dataset
 python scripts/data/build_ivs.py
 ```
 
-**Outputs:**
-- `data/processed/ivs_2005-2022.csv` — merged IVS dataset (~500k+ rows)
-- `data/processed/ivs_2005-2022.metadata.json` — row/column/country counts and wave info
+**Outputs:** `data/processed/ivs_2005-2022.csv`, `data/processed/ivs_2005-2022.metadata.json`
 
 ---
 
-### Stage 2 — Baseline Generation
-
-#### Generate Cultural Map Coordinates
-**File:** [scripts/baseline/generate_cultural_map.py](scripts/baseline/generate_cultural_map.py)
-
-Runs the PCA pipeline on IVS data to produce the ground-truth 88-country Inglehart-Welzel
-cultural map coordinates. Must be run before baseline replication.
+## Stage 1 — Generate Cultural Map Baseline (one-time)
 
 ```bash
 python scripts/baseline/generate_cultural_map.py
 ```
 
-**Outputs:**
-- `data/processed/cultural_map_coordinates.csv` — country-level (x, y) coordinates
-- `data/processed/cultural_map_baseline.png` — plain scatter plot (no zone colors or LLM positions)
-
-**Requires:** `data/processed/ivs_2005-2022.csv` (run Stage 1 first)
+**Outputs:** `data/processed/cultural_map_coordinates.csv`, `outputs/baseline/cultural_map_baseline.png`
 
 ---
 
-### Stage 3 — LLM Querying & Visualization
-
-#### Run Baseline Replication
-**File:** [scripts/baseline/baseline_replication.py](scripts/baseline/baseline_replication.py)
-
-Queries each LLM with all 10 IVS survey questions across 10 prompt variants × 3 tones
-(standard, friendly, combative). Projects responses into the cultural map space and saves
-results CSVs and a JSONL query log.
+## Stage 2 — Baseline Replication
 
 ```bash
-# Run all default models across all tones
+# All models (Ollama auto-detected + any API keys set)
 python scripts/baseline/baseline_replication.py
 
-# Run specific models only
-python scripts/baseline/baseline_replication.py --models gemma2:2b qwen2.5:1.5b
+# Open/local models only
+python scripts/baseline/baseline_replication.py --model-set open
 
-# Run specific tones only
+# Proprietary API models only (requires OPENAI_API_KEY / ANTHROPIC_API_KEY)
+python scripts/baseline/baseline_replication.py --model-set api
+
+# Specific tones only
 python scripts/baseline/baseline_replication.py --tones standard friendly
 
-# Combine: specific models and tones
-python scripts/baseline/baseline_replication.py --models llama3.1:8b --tones combative
+# Specific models (overrides --model-set)
+python scripts/baseline/baseline_replication.py --models gemma2:2b llama3.1:8b
 ```
 
-**Options:**
-
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--models` | Space-separated list of model names (Ollama format) | `--models gemma2:2b llama3.1:8b` |
-| `--tones` | One or more of `standard`, `friendly`, `combative` | `--tones standard combative` |
-
-**Outputs (per tone, timestamped):**
-- `data/results/baseline_models_{tone}_{timestamp}.csv` — model positions and closest country
-- `data/results/baseline_distances_{tone}_{timestamp}.csv` — distance from each model to all 88 countries
-- `logs/queries_{timestamp}.jsonl` — full query/response log
-- `outputs/baseline_summary_{timestamp}.txt` — human-readable findings summary across all tones
-
-**Requires:** `data/processed/cultural_map_coordinates.csv` and `data/processed/ivs_2005-2022.csv`
-
----
-
-#### Visualize Baseline Results
-**File:** [scripts/baseline/visualize_baseline.py](scripts/baseline/visualize_baseline.py)
-
-Reads the most recent results CSVs and generates a publication-quality cultural map image
-with country dots colored by cultural zone, ISO-3 country labels, and LLM star markers.
-Also prints a detailed per-model summary to stdout.
+**Outputs (per tone, in `data/results/baseline/` and `outputs/baseline/`):**
+- `baseline_models_{tone}_{model_set}_{ts}.csv`
+- `baseline_distances_{tone}_{model_set}_{ts}.csv`
+- `baseline_summary_{tones}_{model_set}_{ts}.txt`
+- `logs/baseline/` — JSONL query log
 
 ```bash
-# Visualize most recent results for all 3 tones
+# Visualize — one map per tone found in results
 python scripts/baseline/visualize_baseline.py
 
-# Visualize most recent results for a specific tone
-python scripts/baseline/visualize_baseline.py --tone friendly
+# Filter to a specific model-set run
+python scripts/baseline/visualize_baseline.py --model-set open
 
-# Visualize a specific results file
-python scripts/baseline/visualize_baseline.py --results data/results/baseline_models_combative_20260226_010108.csv
+# Single tone
+python scripts/baseline/visualize_baseline.py --tone standard
 
-# Save to a custom output path
-python scripts/baseline/visualize_baseline.py --tone standard --output outputs/my_map.png
+# Explicit file
+python scripts/baseline/visualize_baseline.py --results data/results/baseline/baseline_models_standard_open_<ts>.csv
 ```
 
-**Options:**
-
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--tone` | Filter to results from a specific tone | `--tone combative` |
-| `--results` | Path to a specific `baseline_models_*.csv` file | `--results data/results/baseline_models_standard_20260301_120000.csv` |
-| `--output` | Override default output image path | `--output outputs/custom.png` |
-
-**Outputs (per tone):**
-- `outputs/baseline_with_models_{tone}_{timestamp}.png` — cultural map with LLM positions
-- `outputs/baseline_with_models_{tone}_{timestamp}.txt` — summary text: positions, quadrant, top-5 closest countries, average model position
-
-**Requires:** `data/results/baseline_models_*.csv` (run Stage 3 querying first)
+**Outputs:** `outputs/baseline/baseline_with_models_{tone}{_model_set}_{ts}.png`
 
 ---
 
-## Analysis Scripts
+## Stage 3 — Stochastic Sensitivity
 
-#### Investigate Y003 Missing Data
-**File:** [scripts/analysis/investigate_y003.py](scripts/analysis/investigate_y003.py)
-
-Analyzes missingness of Y003 (Autonomy Index) across survey waves and quantifies how many
-countries/responses are lost when requiring all 10 questions vs. 9 questions.
+Fix prompt (standard tone, variant 0), vary seed 0–9 → isolates sampling noise.
+Only Ollama models are supported (seed control requires a local runtime).
 
 ```bash
-python scripts/analysis/investigate_y003.py data/processed/ivs_2005-2022.csv
+# All open models (default)
+python scripts/analysis/stochastic_sensitivity.py
+
+# Explicit models
+python scripts/analysis/stochastic_sensitivity.py --models gemma2:2b qwen2.5:7b
 ```
 
-**Stdout includes:** Y003 value distribution, availability by WVS/EVS wave, and comparison
-of country coverage with vs. without the Y003 requirement.
+**Outputs:** `data/results/stochastic/stochastic_flat_{model_set}_{ts}.csv`
+
+```bash
+# Stability heatmap + per-model distributions
+python scripts/analysis/visualize_stochastic.py
+python scripts/analysis/visualize_stochastic.py --model-set open
+
+# Seed clouds on the cultural map
+python scripts/analysis/visualize_stochastic_map.py
+python scripts/analysis/visualize_stochastic_map.py --model-set open
+
+# Explicit flat file
+python scripts/analysis/visualize_stochastic_map.py --flat data/results/stochastic/stochastic_flat_open_<ts>.csv
+```
+
+**Outputs:** `outputs/stochastic/`
 
 ---
 
-#### Explore Raw WVS/EVS Data
-**File:** [scripts/data/explore_wvs_evs.py](scripts/data/explore_wvs_evs.py)
+## Stage 4 — Prompt Sensitivity
 
-Prints basic structural statistics (row count, column count, country count, variable labels)
-for the raw WVS and EVS CSV files. Useful for sanity-checking raw data before building IVS.
+Fix seed (seed=0), vary all 30 prompt variants (3 tones × 10 variants) → isolates wording noise.
 
 ```bash
-python scripts/data/explore_wvs_evs.py
+# All models, temp=0 (for NSR analysis — clean isolation)
+python scripts/analysis/prompt_sensitivity.py
+
+# Open models only
+python scripts/analysis/prompt_sensitivity.py --model-set open
+
+# API models only
+python scripts/analysis/prompt_sensitivity.py --model-set api
+
+# temp=1.0 — run separately to match Stage 3 for the combined map visual
+python scripts/analysis/prompt_sensitivity.py --temperature 1.0
 ```
 
-**Reads:** `data/raw/csv/wvs_trend_1981-2022.csv`, `data/raw/csv/evs_trend_1981-2017.csv`
-and their respective `*_variable_labels.csv` files.
+**Outputs:** `data/results/prompt_sensitivity/prompt_sensitivity_flat_{model_set}_{ts}.csv`
+
+```bash
+# Flip-rate heatmap, tone comparison, variant map, tone interaction
+python scripts/analysis/visualize_prompt_sensitivity.py
+python scripts/analysis/visualize_prompt_sensitivity.py --model-set open
+
+# Explicit flat file
+python scripts/analysis/visualize_prompt_sensitivity.py --flat data/results/prompt_sensitivity/prompt_sensitivity_flat_open_<ts>.csv
+```
+
+**Outputs:** `outputs/prompt_sensitivity/`
 
 ---
 
-## Test / Validation Scripts
+## Stage 5 — Variance Decomposition
 
-#### Test Ollama Setup
-**File:** [tests/test_ollama_setup.py](tests/test_ollama_setup.py)
-
-Verifies that Ollama is running and at least one model is installed and can generate responses.
-Run this first when setting up a new environment.
+Combines Stages 3 + 4 to compute σ_seed, σ_prompt, σ_culture and NSR per (model, question).
 
 ```bash
-python tests/test_ollama_setup.py
+# NSR analysis (use temp=0 prompt file — correct for comparing noise sources)
+python scripts/analysis/variance_decomposition.py
+
+# Filter to a specific model-set
+python scripts/analysis/variance_decomposition.py --model-set open
+
+# Combined cultural map with matched temperatures (pass temp=1.0 prompt run explicitly)
+python scripts/analysis/variance_decomposition.py \
+  --prompt-flat data/results/prompt_sensitivity/prompt_sensitivity_flat_open_<ts>.csv
 ```
+
+**Outputs** (in `outputs/variance_decomposition/`)**:** `variance_bars_{model_set}_{ts}.png`, `noise_signal_heatmap_{model_set}_{ts}.png`, `combined_map_{model_set}_{ts}.png`, `variance_decomposition_{model_set}_{ts}.csv`
 
 ---
 
-#### Test LLM Infrastructure
-**File:** [tests/test_llm_infrastructure.py](tests/test_llm_infrastructure.py)
-
-End-to-end test of the query wrapper, response parser, and logging system. Tests Ollama
-connectivity, prompt formatting, response parsing, and log writing. Run before starting
-a full experiment to catch configuration issues early.
+## Tests
 
 ```bash
-python tests/test_llm_infrastructure.py
-```
-
----
-
-#### Validate Week 2 Completion
-**File:** [tests/validate_week2.py](tests/validate_week2.py)
-
-Validates that the Week 2 deliverables (IVS merge, PCA pipeline) are working correctly.
-
-```bash
-python tests/validate_week2.py
-```
-
----
-
-#### Verify Data Conversion
-**File:** [tests/verify_data_conversion.py](tests/verify_data_conversion.py)
-
-Checks that the WVS/EVS merge output is well-formed (correct columns, no corrupt rows, etc.).
-
-```bash
-python tests/verify_data_conversion.py
+python tests/test_ollama_setup.py        # Verify Ollama is running
+python tests/test_llm_infrastructure.py  # End-to-end query + parse + log test
+python tests/validate_week2.py           # Validate IVS merge + PCA pipeline
+python tests/verify_data_conversion.py   # Check WVS/EVS merge output
 ```
 
 ---
 
 ## Ollama Model Management
 
-These are standard Ollama CLI commands for managing local models used in the pipeline.
-
 ```bash
-# List all locally available models
-ollama list
-
-# Pull a model (downloads it)
-ollama pull gemma2:2b
+ollama list                         # List installed models
+ollama pull gemma2:2b               # Download a model
 ollama pull phi3:mini
 ollama pull qwen2.5:1.5b
 ollama pull qwen2.5:3b
@@ -222,12 +180,8 @@ ollama pull mistral:7b
 ollama pull llama3.1:8b
 ollama pull yi:6b
 ollama pull salmatrafi/acegpt:7b
-
-# Remove a model
-ollama rm gemma2:2b
-
-# Check if Ollama server is running
-ollama ps
+ollama rm gemma2:2b                 # Remove a model
+ollama ps                           # Check server status
 ```
 
 ---
@@ -236,12 +190,15 @@ ollama ps
 
 | Goal | Command |
 |------|---------|
-| Set up IVS data from scratch | `python scripts/data/build_ivs.py` |
-| Generate country baselines | `python scripts/baseline/generate_cultural_map.py` |
-| Query all models, all tones | `python scripts/baseline/baseline_replication.py` |
-| Query specific models | `python scripts/baseline/baseline_replication.py --models llama3.1:8b` |
-| Visualize latest standard results | `python scripts/baseline/visualize_baseline.py --tone standard` |
-| Visualize a specific file | `python scripts/baseline/visualize_baseline.py --results data/results/baseline_models_friendly_20260301_120000.csv` |
-| Investigate Y003 missingness | `python scripts/analysis/investigate_y003.py data/processed/ivs_2005-2022.csv` |
-| Verify Ollama works | `python tests/test_ollama_setup.py` |
-| Full infrastructure check | `python tests/test_llm_infrastructure.py` |
+| Build IVS dataset | `python scripts/data/build_ivs.py` |
+| Generate country map | `python scripts/baseline/generate_cultural_map.py` |
+| Run baseline (all models) | `python scripts/baseline/baseline_replication.py` |
+| Run baseline (open only) | `python scripts/baseline/baseline_replication.py --model-set open` |
+| Visualize baseline | `python scripts/baseline/visualize_baseline.py` |
+| Stage 3 — stochastic | `python scripts/analysis/stochastic_sensitivity.py` |
+| Stage 3 — visualize | `python scripts/analysis/visualize_stochastic.py` |
+| Stage 3 — cultural map | `python scripts/analysis/visualize_stochastic_map.py` |
+| Stage 4 — prompt sensitivity | `python scripts/analysis/prompt_sensitivity.py` |
+| Stage 4 — visualize | `python scripts/analysis/visualize_prompt_sensitivity.py` |
+| Stage 5 — variance decomposition | `python scripts/analysis/variance_decomposition.py` |
+| Test Ollama setup | `python tests/test_ollama_setup.py` |

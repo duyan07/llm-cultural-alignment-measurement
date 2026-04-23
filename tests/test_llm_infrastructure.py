@@ -219,7 +219,7 @@ def test_logging():
 
 def main():
     print("="*70)
-    print("WEEK 3 INFRASTRUCTURE TEST")
+    print("LLM INFRASTRUCTURE TEST")
     print("="*70)
 
     tests = [
@@ -261,7 +261,7 @@ def main():
             print("  - Local models via Ollama")
         if api_passed:
             print("  - OpenAI API models")
-        print("\nNext: Run baseline replication with Week 6 script")
+        print("\nNext: Run baseline replication (Stage 2)")
     elif critical_passed:
         print("CORE SYSTEMS READY")
         print("\nNeed at least one LLM provider:")

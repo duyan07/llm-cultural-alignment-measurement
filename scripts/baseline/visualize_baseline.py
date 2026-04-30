@@ -77,9 +77,14 @@ def load_model_results(results_path=None, tone=None, model_set=None):
             f"No baseline results found matching '{pattern}'{tag}. "
             "Run scripts/baseline/baseline_replication.py first."
         )
-    results_path = str(files[-1])
-    print(f"Loading results from: {results_path}")
-    return pd.read_csv(results_path), _tone_from_path(results_path), _timestamp_from_path(results_path)
+    # When no model_set filter is applied, merge all files so open + api
+    # models appear together. When filtered to a specific set, use latest only.
+    if model_set:
+        files = [files[-1]]
+    for f in files:
+        print(f"Loading results from: {f}")
+    df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
+    return df, _tone_from_path(files[-1]), _timestamp_from_path(files[-1])
 
 
 def _filter_by_model_set(paths, model_set):

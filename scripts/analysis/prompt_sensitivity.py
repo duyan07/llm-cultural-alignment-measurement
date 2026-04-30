@@ -56,9 +56,9 @@ REFERENCE_TONE    = 'standard'
 REFERENCE_VARIANT = 0
 
 PROPRIETARY_MODELS = {
-    'gpt-4o':         'openai',
-    'gpt-4-turbo':    'openai',
-    'claude-sonnet-4-5': 'anthropic',
+    'gpt-4o':            'openai',
+    'gpt-4o-mini':       'openai',
+    'claude-sonnet-4-6': 'anthropic',
 }
 
 

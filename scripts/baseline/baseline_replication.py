@@ -37,8 +37,8 @@ from src.geo_data import COUNTRY_NAMES, ISO3_TO_ZONE, load_iso3_lookup, quadrant
 
 PROPRIETARY_MODELS = {
     'gpt-4o':            'openai',
-    'gpt-4-turbo':       'openai',
-    'claude-sonnet-4-5': 'anthropic',
+    'gpt-4o-mini':       'openai',
+    'claude-sonnet-4-6': 'anthropic',
 }
 
 # Paths
@@ -62,7 +62,7 @@ class BaselineReplicator:
         """
         self.model_set = model_set
         self.models = (
-            [(m, 'ollama') for m in models_to_test]
+            [(m, PROPRIETARY_MODELS.get(m, 'ollama')) for m in models_to_test]
             if models_to_test is not None
             else self._build_model_list()
         )
@@ -182,10 +182,10 @@ class BaselineReplicator:
                 )
 
                 # Parse response
-                parsed = ResponseParser.parse_by_type(
-                    result.get('response', ''),
-                    question_info
-                )
+                raw_response = result.get('response') or ''
+                if result.get('error') and not raw_response:
+                    print(f"API error: {result['error']}", end=' ')
+                parsed = ResponseParser.parse_by_type(raw_response, question_info)
 
                 is_valid = parsed is not None
                 print(f"{'OK' if is_valid else 'FAIL'}")

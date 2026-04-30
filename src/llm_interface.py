@@ -15,6 +15,8 @@ Handles:
 """
 
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import time
 import json
 from typing import Dict, Any, Optional, List

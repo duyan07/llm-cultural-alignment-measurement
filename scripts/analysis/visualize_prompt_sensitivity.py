@@ -18,10 +18,8 @@ Usage:
 """
 
 import sys
-import json
 import argparse
 from pathlib import Path
-from collections import Counter
 
 import numpy as np
 import pandas as pd
@@ -34,81 +32,28 @@ from matplotlib.colors import LinearSegmentedColormap
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.response_parser import ResponseParser
-from src.prompts import QUESTIONS, TONES
+from src.prompts import QUESTIONS
 from src.cultural_map import CulturalMapGenerator
-from src.geo_data import ZONE_COLORS, ISO3_TO_ZONE, load_iso3_lookup
+from src.geo_data import ZONE_COLORS
+from src.viz_common import (
+    QUESTION_ORDER,
+    QUESTION_LABELS,
+    QUESTION_SHORT,
+    NUMERIC_QUESTIONS,
+    TONE_COLORS,
+    MODEL_COLORS,
+    model_label_inline,
+    model_label_multiline as model_label,
+    parse_value as parse_val,
+    load_pca,
+    load_baseline,
+)
 
 RESULTS_DIR   = Path("data/results/prompt_sensitivity")
 OUTPUTS_DIR   = Path("outputs/prompt_sensitivity")
-BASELINE_PATH = Path("data/processed/cultural_map_coordinates.csv")
-IVS_PATH      = Path("data/processed/ivs_2005-2022.csv")
 
 REFERENCE_TONE    = 'standard'
 REFERENCE_VARIANT = 0
-
-QUESTION_ORDER = ['A008', 'A165', 'E018', 'E025', 'F063',
-                  'F118', 'F120', 'G006', 'Y002', 'Y003']
-QUESTION_LABELS = {
-    'A008': 'Happiness\n(1–4)',
-    'A165': 'Trust\n(A/B)',
-    'E018': 'Authority\n(1–3)',
-    'E025': 'Petition\n(A/B/C)',
-    'F063': 'God\n(1–10)',
-    'F118': 'Homosexuality\n(1–10)',
-    'F120': 'Abortion\n(1–10)',
-    'G006': 'Nationality\n(1–4)',
-    'Y002': 'Post-Mat.\n(rank 2)',
-    'Y003': 'Autonomy\n(pick 5)',
-}
-QUESTION_SHORT = {
-    'A008': 'Happiness',   'A165': 'Trust',
-    'E018': 'Authority',   'E025': 'Petition',
-    'F063': 'God',         'F118': 'Homosexuality',
-    'F120': 'Abortion',    'G006': 'Nationality',
-    'Y002': 'Post-Mat.',   'Y003': 'Autonomy',
-}
-NUMERIC_QUESTIONS = {'A008', 'E018', 'F063', 'F118', 'F120', 'G006'}
-
-TONE_COLORS = {
-    'standard':  '#4878cf',
-    'friendly':  '#6acc65',
-    'combative': '#d65f5f',
-}
-
-MODEL_PARAMS = {
-    'gemma2:2b':            '2B',
-    'phi3:mini':            '3.8B',
-    'qwen2.5:1.5b':         '1.5B',
-    'qwen2.5:3b':           '3B',
-    'qwen2.5:7b':           '7B',
-    'mistral:7b':           '7B',
-    'llama3.1:8b':          '8B',
-    'yi:6b':                '6B',
-    'salmatrafi/acegpt:7b': '7B',
-}
-MODEL_COLORS = [
-    '#e41a1c', '#ff7f00', '#984ea3', '#4daf4a',
-    '#377eb8', '#a65628', '#f781bf', '#999999', '#17becf',
-]
-
-
-def model_label(name):
-    short  = name.split('/')[-1].split(':')[0]
-    params = MODEL_PARAMS.get(name)
-    return f"{short}\n({params})" if params else short
-
-
-def model_label_inline(name):
-    short  = name.split('/')[-1].split(':')[0]
-    params = MODEL_PARAMS.get(name)
-    return f"{short} ({params})" if params else short
-
-
-def parse_val(v):
-    try:
-        return json.loads(v)
-    except (json.JSONDecodeError, TypeError):
-        return None
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
@@ -280,67 +225,86 @@ def plot_tone_comparison(flat_df: pd.DataFrame, out_path: Path) -> None:
 
 # ── Figure 3: Cultural map variant clouds ─────────────────────────────────────
 
-def load_pca():
-    print("Fitting PCA on IVS data...")
-    ivs_df = pd.read_csv(IVS_PATH, low_memory=False)
-    gen = CulturalMapGenerator(ivs_df)
-    gen.fit()
-    print("PCA ready.\n")
-    return gen
-
-
-def load_baseline():
-    df = pd.read_csv(BASELINE_PATH)
-    iso_lookup = load_iso3_lookup(IVS_PATH)
-    df['iso3'] = df['country_code'].map(iso_lookup).fillna('???')
-    df['zone'] = df['iso3'].map(ISO3_TO_ZONE).fillna('Other')
-    return df
-
-
 def variant_to_coords(variant_df: pd.DataFrame,
                       pca_gen: CulturalMapGenerator):
-    """Project one (model, tone, variant) response set to (x, y)."""
-    question_values = {}
+    """Project one (model, tone, variant) response set to (x, y).
+
+    Each invalid response slot contributes 0 to the PC score (mathematically
+    equivalent to imputing the IVS standardised mean). Returns (x, y, n_valid).
+    """
+    standardized = []
+    n_valid = 0
     for question_id, question_info in QUESTIONS.items():
         row = variant_df[variant_df['question_id'] == question_id]
-        if row.empty or not row.iloc[0]['is_valid']:
-            return np.nan, np.nan
-        numeric = ResponseParser.to_ivs_numeric(row.iloc[0]['parsed'], question_info)
-        if numeric is None:
-            return np.nan, np.nan
-        question_values[question_id] = numeric
+        invalid = row.empty or not row.iloc[0]['is_valid']
+        numeric = None
+        if not invalid:
+            numeric = ResponseParser.to_ivs_numeric(row.iloc[0]['parsed'], question_info)
 
-    standardized = [
-        (question_values[qid] - pca_gen.question_means_[qid]) / pca_gen.question_stds_[qid]
-        for qid in QUESTIONS
-    ]
+        if numeric is None:
+            standardized.append(0.0)
+            continue
+
+        standardized.append(
+            (numeric - pca_gen.question_means_[question_id]) /
+            pca_gen.question_stds_[question_id]
+        )
+        n_valid += 1
+
+    if n_valid == 0:
+        return np.nan, np.nan, 0
+
     pca_scores = pca_gen.pca_model.transform(
         np.array(standardized).reshape(1, -1)
     )[0]
     x = 1.81 * pca_scores[0] + 0.38
     y = 1.61 * pca_scores[1] - 0.01
-    return x, y
+    return x, y, n_valid
 
 
 def compute_variant_coords(flat_df: pd.DataFrame,
                            pca_gen: CulturalMapGenerator) -> pd.DataFrame:
-    rows = []
+    """Compute per-(model, tone, variant) coordinates with pointwise imputation.
+
+    Models with zero valid responses anywhere (likely API/system errors)
+    are excluded entirely.
+    """
+    excluded_models = set()
     for model in flat_df['model'].unique():
+        if flat_df[flat_df['model'] == model]['is_valid'].sum() == 0:
+            excluded_models.add(model)
+
+    if excluded_models:
+        print(f"  Excluding {len(excluded_models)} model(s) with zero valid "
+              f"responses (likely API/system error):")
+        for m in sorted(excluded_models):
+            print(f"    - {model_label_inline(m)}")
+
+    rows = []
+    models = [m for m in flat_df['model'].unique() if m not in excluded_models]
+
+    for model in models:
         mdf = flat_df[flat_df['model'] == model]
-        n_valid = 0
+        n_mapped = 0
+        n_full = 0
         for (tone, variant), grp in mdf.groupby(['tone', 'variant']):
-            x, y = variant_to_coords(grp, pca_gen)
-            valid = not (np.isnan(x) or np.isnan(y))
+            x, y, n_valid = variant_to_coords(grp, pca_gen)
+            mapped = not (np.isnan(x) or np.isnan(y))
             rows.append({
                 'model': model, 'tone': tone, 'variant': variant,
                 'survival_selfexpression': x,
                 'traditional_secular': y,
-                'valid': valid,
+                'n_valid': n_valid,
+                'fully_valid': n_valid == len(QUESTIONS),
+                'valid': mapped,
             })
-            if valid:
-                n_valid += 1
+            if mapped:
+                n_mapped += 1
+            if n_valid == len(QUESTIONS):
+                n_full += 1
         total = mdf.groupby(['tone', 'variant']).ngroups
-        print(f"  {model_label_inline(model):<22s}  {n_valid}/{total} variants mapped")
+        print(f"  {model_label_inline(model):<22s}  {n_mapped}/{total} variants mapped"
+              f"  ({n_full} fully-valid, {n_mapped - n_full} with imputed slots)")
     return pd.DataFrame(rows)
 
 
@@ -369,6 +333,7 @@ def plot_variant_map(coords_df: pd.DataFrame,
     # Per-model variant clouds
     models = coords_df['model'].unique()
     model_handles = []
+    has_imputed_any = False
 
     for idx, model in enumerate(models):
         color = MODEL_COLORS[idx % len(MODEL_COLORS)]
@@ -377,22 +342,33 @@ def plot_variant_map(coords_df: pd.DataFrame,
         if mdf.empty:
             continue
 
-        # Colour dots by tone
+        full_mdf = mdf[mdf['fully_valid']]
+        partial_mdf = mdf[~mdf['fully_valid']]
+        if not partial_mdf.empty:
+            has_imputed_any = True
+
+        # Colour dots by tone, split filled (fully-valid) vs hollow (imputed)
         for tone in ['standard', 'friendly', 'combative']:
-            tdf = mdf[mdf['tone'] == tone]
-            if tdf.empty:
-                continue
-            ax.scatter(
-                tdf['survival_selfexpression'], tdf['traditional_secular'],
-                c=TONE_COLORS[tone], s=55, alpha=0.50,
-                edgecolors=color, linewidth=0.8, zorder=6,
-                marker={'standard': 'o', 'friendly': 's', 'combative': '^'}[tone]
-            )
+            marker = {'standard': 'o', 'friendly': 's', 'combative': '^'}[tone]
+            tone_full = full_mdf[full_mdf['tone'] == tone]
+            tone_part = partial_mdf[partial_mdf['tone'] == tone]
+            if not tone_full.empty:
+                ax.scatter(
+                    tone_full['survival_selfexpression'],
+                    tone_full['traditional_secular'],
+                    c=TONE_COLORS[tone], s=55, alpha=0.50,
+                    edgecolors=color, linewidth=0.8, zorder=6, marker=marker,
+                )
+            if not tone_part.empty:
+                ax.scatter(
+                    tone_part['survival_selfexpression'],
+                    tone_part['traditional_secular'],
+                    facecolors='none', edgecolors=TONE_COLORS[tone],
+                    s=55, alpha=0.75, linewidth=1.4, zorder=6, marker=marker,
+                )
 
         cx = mdf['survival_selfexpression'].mean()
         cy = mdf['traditional_secular'].mean()
-        std_x = mdf['survival_selfexpression'].std()
-        std_y = mdf['traditional_secular'].std()
 
         # Spokes from centroid
         for _, r in mdf.iterrows():
@@ -400,19 +376,34 @@ def plot_variant_map(coords_df: pd.DataFrame,
                     [cy, r['traditional_secular']],
                     color=color, alpha=0.15, linewidth=0.7, zorder=5)
 
-        # Centroid star
-        ax.scatter(cx, cy, c=color, s=380, marker='*',
-                   edgecolors='black', linewidth=1.2, zorder=10)
-        ax.annotate(label, xy=(cx, cy), xytext=(10, 7),
+        # Centroid star — solid if all points fully valid, hollow otherwise
+        all_valid = len(full_mdf) == len(mdf)
+        if all_valid:
+            ax.scatter(cx, cy, c=color, s=380, marker='*',
+                       edgecolors='black', linewidth=1.2, zorder=10)
+            label_text = label
+        else:
+            ax.scatter(cx, cy, facecolors='white', s=380, marker='*',
+                       edgecolors=color, linewidth=2.0, zorder=10)
+            label_text = f"{label}  ({len(full_mdf)}/{len(mdf)})"
+
+        ax.annotate(label_text, xy=(cx, cy), xytext=(10, 7),
                     textcoords='offset points',
                     fontsize=8.5, fontweight='bold',
                     bbox=dict(boxstyle='round,pad=0.25', facecolor=color,
                               alpha=0.80, edgecolor='black', linewidth=0.7),
                     zorder=11)
-        ax.annotate(f"σ=({std_x:.2f}, {std_y:.2f})",
-                    xy=(cx, cy), xytext=(10, -8),
-                    textcoords='offset points',
-                    fontsize=6.5, color=color, zorder=11)
+
+        # σ from fully-valid points only
+        if len(full_mdf) >= 2:
+            std_x = full_mdf['survival_selfexpression'].std()
+            std_y = full_mdf['traditional_secular'].std()
+            ax.annotate(
+                f"σ=({std_x:.2f}, {std_y:.2f})",
+                xy=(cx, cy), xytext=(10, -8),
+                textcoords='offset points',
+                fontsize=6.5, color=color, zorder=11,
+            )
 
         model_handles.append(
             plt.Line2D([0], [0], marker='*', color='w',
@@ -424,9 +415,18 @@ def plot_variant_map(coords_df: pd.DataFrame,
                   fontsize=12, fontweight='bold', labelpad=8)
     ax.set_ylabel('Traditional  ←               →  Secular Values',
                   fontsize=12, fontweight='bold', labelpad=8)
+
+    impute_subtitle = (
+        '\nFilled markers = all 10 questions valid    Hollow markers = ≥1 question imputed'
+        ' (slot contributes 0 to the score)    ★ hollow centroid + label "(n_full/N)" '
+        'when not all points fully valid    σ from fully-valid subset only'
+        if has_imputed_any else ''
+    )
+
     ax.set_title(
         'Prompt Sensitivity — Cultural Map Variant Clouds\n'
-        '(30 prompt variants per model: ● standard  ■ friendly  ▲ combative  |  ★ = centroid)',
+        '(30 prompt variants per model: ● standard  ■ friendly  ▲ combative  |  ★ = centroid)'
+        f'{impute_subtitle}',
         fontsize=12, fontweight='bold', pad=14,
     )
 
@@ -569,6 +569,72 @@ def plot_tone_interaction(flat_df: pd.DataFrame, out_path: Path) -> None:
     print(f"Saved: {out_path}")
 
 
+# ── Figure 5: Refusal-rate heatmap ────────────────────────────────────────────
+
+def plot_refusal_heatmap(flat_df: pd.DataFrame, out_path: Path) -> None:
+    """
+    Per-(model, question) refusal-rate heatmap. Captures the orthogonal
+    "what does each model refuse" story so the cultural map is freed from
+    having to encode refusal behaviour.
+    """
+    models = sorted(flat_df['model'].unique())
+
+    rows = []
+    for model in models:
+        md = flat_df[flat_df['model'] == model]
+        for qid in QUESTION_ORDER:
+            grp = md[md['question_id'] == qid]
+            if len(grp) == 0:
+                rate = np.nan
+            else:
+                rate = (~grp['is_valid']).sum() / len(grp)
+            rows.append({'model': model, 'question_id': qid, 'rate': rate})
+    rate_df = pd.DataFrame(rows)
+    pivot = rate_df.pivot(index='question_id', columns='model', values='rate')
+    pivot = pivot.reindex(QUESTION_ORDER)[models]
+
+    cmap = LinearSegmentedColormap.from_list(
+        'refusal', ['#ffffff', '#fdbb84', '#e34a33', '#7f0000']
+    )
+
+    fig, ax = plt.subplots(figsize=(max(10, len(models) * 1.3), 6))
+    im = ax.imshow(pivot.values.astype(float),
+                   aspect='auto', cmap=cmap, vmin=0, vmax=1)
+
+    ax.set_xticks(range(len(models)))
+    ax.set_xticklabels([model_label(m) for m in models],
+                       rotation=30, ha='right', fontsize=9)
+    ax.set_yticks(range(len(QUESTION_ORDER)))
+    ax.set_yticklabels(
+        [QUESTION_LABELS.get(q, q).replace('\n', ' ') for q in QUESTION_ORDER],
+        fontsize=9,
+    )
+
+    for i, qid in enumerate(QUESTION_ORDER):
+        for j, model in enumerate(models):
+            val = pivot.loc[qid, model] if (qid in pivot.index and
+                                            model in pivot.columns) else np.nan
+            if not np.isnan(val):
+                txt_color = 'white' if val > 0.55 else 'black'
+                ax.text(j, i, f'{val:.0%}',
+                        ha='center', va='center', fontsize=8, color=txt_color)
+
+    plt.colorbar(im, ax=ax,
+                 label='Refusal rate  (fraction of responses that were invalid/refused)')
+    ax.set_title(
+        'Refusal Rate per Model × Question  (prompt-sensitivity dataset)\n'
+        'Refusals are an orthogonal signal to cultural-map position: this shows '
+        'where each model declines to engage',
+        fontsize=11, fontweight='bold',
+    )
+
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -603,6 +669,9 @@ def main():
 
     # Figure 4: tone interaction heatmap
     plot_tone_interaction(flat_df, OUTPUTS_DIR / f"tone_interaction{ms_tag}_{ts}.png")
+
+    # Figure 5: refusal-rate heatmap
+    plot_refusal_heatmap(flat_df, OUTPUTS_DIR / f"refusal_rates{ms_tag}_{ts}.png")
 
 
 if __name__ == '__main__':

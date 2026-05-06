@@ -24,7 +24,6 @@ Usage:
 """
 
 import sys
-import json
 import argparse
 from pathlib import Path
 
@@ -40,57 +39,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.response_parser import ResponseParser
 from src.prompts import QUESTIONS
-from src.cultural_map import CulturalMapGenerator
-from src.geo_data import ZONE_COLORS, ISO3_TO_ZONE, load_iso3_lookup
+from src.geo_data import ZONE_COLORS
+from src.viz_common import (
+    QUESTION_ORDER,
+    QUESTION_SHORT,
+    MODEL_COLORS,
+    model_label_inline as model_label,
+    parse_value as parse_val,
+    load_pca,
+    load_baseline as load_baseline_df,
+)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 STOCHASTIC_DIR   = Path("data/results/stochastic")
 PROMPT_SENS_DIR  = Path("data/results/prompt_sensitivity")
-BASELINE_PATH    = Path("data/processed/cultural_map_coordinates.csv")
-IVS_PATH         = Path("data/processed/ivs_2005-2022.csv")
 OUTPUTS_DIR      = Path("outputs/variance_decomposition")
-
-REFERENCE_TONE    = 'standard'
-REFERENCE_VARIANT = 0
-
-QUESTION_ORDER = ['A008', 'A165', 'E018', 'E025', 'F063',
-                  'F118', 'F120', 'G006', 'Y002', 'Y003']
-QUESTION_SHORT = {
-    'A008': 'Happiness',   'A165': 'Trust',
-    'E018': 'Authority',   'E025': 'Petition',
-    'F063': 'God',         'F118': 'Homosexuality',
-    'F120': 'Abortion',    'G006': 'Nationality',
-    'Y002': 'Post-Mat.',   'Y003': 'Autonomy',
-}
-
-MODEL_PARAMS = {
-    'gemma2:2b':            '2B',   'phi3:mini':            '3.8B',
-    'qwen2.5:1.5b':         '1.5B', 'qwen2.5:3b':           '3B',
-    'qwen2.5:7b':           '7B',   'mistral:7b':           '7B',
-    'llama3.1:8b':          '8B',   'yi:6b':                '6B',
-    'salmatrafi/acegpt:7b': '7B',
-}
-MODEL_COLORS = [
-    '#e41a1c', '#ff7f00', '#984ea3', '#4daf4a',
-    '#377eb8', '#a65628', '#f781bf', '#999999', '#17becf',
-]
-
-
-def model_label(name):
-    short  = name.split('/')[-1].split(':')[0]
-    params = MODEL_PARAMS.get(name)
-    return f"{short} ({params})" if params else short
 
 
 # ── Data loading + variance computation ──────────────────────────────────────
-
-def parse_val(v):
-    try:
-        return json.loads(str(v))
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return None
-
 
 def to_numeric(parsed, qid):
     if parsed is None:
@@ -178,12 +145,17 @@ def compute_culture_signal(stoch: pd.DataFrame, prompt: pd.DataFrame) -> pd.Data
 
 
 def build_decomposition(stoch, prompt, culture) -> pd.DataFrame:
-    """Merge all three variance sources into one flat table."""
+    """Merge all three variance sources into one flat table.
+
+    σ_seed is left as NaN for models that lack stochastic data (e.g. API
+    models without a seed parameter). σ_noise and noise_to_signal then
+    propagate NaN for those rows, signalling 'not measured' rather than
+    silently treating it as zero.
+    """
     merged = stoch.merge(prompt, on=['model', 'question_id'], how='outer')
     merged = merged.merge(culture, on='question_id', how='left')
 
-    merged['sigma_noise'] = merged['sigma_seed'].fillna(0) + \
-                            merged['sigma_prompt'].fillna(0)
+    merged['sigma_noise'] = merged['sigma_seed'] + merged['sigma_prompt']
     merged['noise_to_signal'] = merged['sigma_noise'] / \
                                 merged['sigma_culture'].replace(0, np.nan)
     return merged
@@ -212,13 +184,17 @@ def plot_variance_bars(decomp: pd.DataFrame, out_path: Path) -> None:
     for ax, model in zip(axes, models):
         mdf = decomp[decomp['model'] == model].set_index('question_id')
 
-        seed_vals   = [mdf.loc[q, 'sigma_seed']   if q in mdf.index else 0
+        seed_raw    = [mdf.loc[q, 'sigma_seed']   if q in mdf.index else np.nan
                        for q in QUESTION_ORDER]
-        prompt_vals = [mdf.loc[q, 'sigma_prompt']  if q in mdf.index else 0
+        prompt_vals = [mdf.loc[q, 'sigma_prompt'] if q in mdf.index else 0
                        for q in QUESTION_ORDER]
         cult_vals   = [mdf.loc[q, 'sigma_culture'] if q in mdf.index else 0
                        for q in QUESTION_ORDER]
 
+        seed_unmeasured = all(pd.isna(v) for v in seed_raw)
+        seed_vals = [0 if pd.isna(v) else v for v in seed_raw]
+
+        # σ_seed bar — drawn only where measured; otherwise stack starts at 0
         ax.bar(x, seed_vals,   bar_w,
                label='σ_seed (stochastic)',   color='#4878cf', alpha=0.85)
         ax.bar(x, prompt_vals, bar_w,
@@ -230,7 +206,11 @@ def plot_variance_bars(decomp: pd.DataFrame, out_path: Path) -> None:
             ax.plot([i - bar_w/2, i + bar_w/2], [cv, cv],
                     color='#2ecc71', linewidth=2.2, zorder=5)
 
-        ax.set_title(model_label(model), fontsize=10, fontweight='bold')
+        title = model_label(model)
+        if seed_unmeasured:
+            title += '\n(σ_seed not measured — API has no seed param)'
+        ax.set_title(title, fontsize=10, fontweight='bold',
+                     color='#777777' if seed_unmeasured else 'black')
         ax.set_xticks(x)
         ax.set_xticklabels([QUESTION_SHORT[q] for q in QUESTION_ORDER],
                            rotation=40, ha='right', fontsize=7.5)
@@ -275,8 +255,9 @@ def plot_noise_signal_heatmap(decomp: pd.DataFrame, out_path: Path) -> None:
                           values='noise_to_signal')
     pivot  = pivot.reindex(QUESTION_ORDER)[models]
 
-    # Cap display at 3 for colour scaling; annotate actual value
-    display = pivot.values.astype(float).clip(0, 3)
+    raw_values = pivot.values.astype(float)
+    nan_mask = np.isnan(raw_values)
+    display = np.where(nan_mask, 0.0, raw_values).clip(0, 3)
 
     cmap = LinearSegmentedColormap.from_list(
         'nsr', ['#2ecc71', '#f1c40f', '#e74c3c']
@@ -284,6 +265,22 @@ def plot_noise_signal_heatmap(decomp: pd.DataFrame, out_path: Path) -> None:
 
     fig, ax = plt.subplots(figsize=(max(10, len(models) * 1.4), 6))
     im = ax.imshow(display, aspect='auto', cmap=cmap, vmin=0, vmax=3)
+
+    # Overlay grey hatch on NaN cells (σ_seed unmeasured for API models)
+    if nan_mask.any():
+        nan_overlay = np.where(nan_mask, 1.0, np.nan)
+        ax.imshow(nan_overlay, aspect='auto',
+                  cmap=LinearSegmentedColormap.from_list('grey', ['#cccccc', '#cccccc']),
+                  vmin=0, vmax=1)
+        # Add hatching via patches
+        for i in range(nan_mask.shape[0]):
+            for j in range(nan_mask.shape[1]):
+                if nan_mask[i, j]:
+                    ax.add_patch(mpatches.Rectangle(
+                        (j - 0.5, i - 0.5), 1, 1,
+                        fill=False, hatch='///',
+                        edgecolor='#777777', linewidth=0,
+                    ))
 
     ax.set_xticks(range(len(models)))
     ax.set_xticklabels([model_label(m) for m in models],
@@ -295,7 +292,11 @@ def plot_noise_signal_heatmap(decomp: pd.DataFrame, out_path: Path) -> None:
         for j, model in enumerate(models):
             val = pivot.loc[qid, model] if (qid in pivot.index and
                                             model in pivot.columns) else np.nan
-            if not np.isnan(val):
+            if np.isnan(val):
+                ax.text(j, i, 'n/a',
+                        ha='center', va='center', fontsize=7,
+                        color='#555555', style='italic')
+            else:
                 label_txt = f'{val:.2f}'
                 txt_color = 'white' if val > 1.5 or val < 0.3 else 'black'
                 ax.text(j, i, label_txt,
@@ -308,10 +309,14 @@ def plot_noise_signal_heatmap(decomp: pd.DataFrame, out_path: Path) -> None:
     cbar.set_ticklabels(['0', '1.0\n(threshold)', '2', '≥3'])
 
     ax.axhline(y=-0.5, color='black', linewidth=0)   # padding
+    nan_subtitle = (
+        '\nGrey hatched cells = σ_seed not measured (API models have no seed param)'
+        if nan_mask.any() else ''
+    )
     ax.set_title(
         'Noise-to-Signal Ratio  —  (σ_seed + σ_prompt) / σ_culture\n'
         'Red = instrument noise dominates cultural signal  |  '
-        'Green = signal detectable',
+        f'Green = signal detectable{nan_subtitle}',
         fontsize=11, fontweight='bold'
     )
 
@@ -323,57 +328,62 @@ def plot_noise_signal_heatmap(decomp: pd.DataFrame, out_path: Path) -> None:
 
 # ── Figure 3: Combined cultural map (seed + prompt clouds) ───────────────────
 
-def load_pca():
-    ivs_df = pd.read_csv(IVS_PATH, low_memory=False)
-    gen = CulturalMapGenerator(ivs_df)
-    gen.fit()
-    return gen
-
-
-def load_baseline_df():
-    df = pd.read_csv(BASELINE_PATH)
-    iso_lookup = load_iso3_lookup(IVS_PATH)
-    df['iso3'] = df['country_code'].map(iso_lookup).fillna('???')
-    df['zone'] = df['iso3'].map(ISO3_TO_ZONE).fillna('Other')
-    return df
-
-
 def flat_to_coords(flat_df, group_cols, pca_gen):
-    """Project each group defined by group_cols to (x, y) map coordinates."""
+    """Project each group defined by group_cols to (x, y) map coordinates
+    using pointwise imputation: invalid slots contribute 0 to the PC score.
+
+    Models with zero valid responses anywhere (likely API/system errors) are
+    excluded entirely. Each output row carries n_valid (slots that contributed
+    real data) so downstream plotting can render filled vs hollow markers.
+    """
+    if 'model' not in group_cols:
+        raise ValueError("flat_to_coords requires 'model' in group_cols")
+
+    excluded_models = set()
+    for model in flat_df['model'].unique():
+        if flat_df[flat_df['model'] == model]['is_valid'].sum() == 0:
+            excluded_models.add(model)
+    if excluded_models:
+        print(f"    Excluding {len(excluded_models)} model(s) with zero valid "
+              f"responses: {sorted(excluded_models)}")
+    flat_df = flat_df[~flat_df['model'].isin(excluded_models)]
+
     rows = []
     for keys, grp in flat_df.groupby(group_cols):
-        question_values = {}
-        for qid, qinfo in QUESTIONS.items():
-            qrow = grp[grp['question_id'] == qid]
-            if qrow.empty or not qrow.iloc[0]['is_valid']:
-                question_values = None
-                break
-            num = to_numeric(parse_val(qrow.iloc[0]['parsed_value']), qid)
-            if num is None:
-                question_values = None
-                break
-            question_values[qid] = num
+        keys_tuple = keys if isinstance(keys, tuple) else (keys,)
 
-        if not question_values:
+        standardized = []
+        n_valid = 0
+        for qid in QUESTIONS:
+            qrow = grp[grp['question_id'] == qid]
+            invalid = qrow.empty or not qrow.iloc[0]['is_valid']
+            num = None
+            if not invalid:
+                num = to_numeric(parse_val(qrow.iloc[0]['parsed_value']), qid)
+
+            if num is None:
+                standardized.append(0.0)
+                continue
+
+            standardized.append(
+                (num - pca_gen.question_means_[qid]) / pca_gen.question_stds_[qid]
+            )
+            n_valid += 1
+
+        if n_valid == 0:
             continue
 
-        standardized = [
-            (question_values[qid] - pca_gen.question_means_[qid]) /
-             pca_gen.question_stds_[qid]
-            for qid in QUESTIONS
-        ]
         scores = pca_gen.pca_model.transform(
             np.array(standardized).reshape(1, -1)
         )[0]
         x = 1.81 * scores[0] + 0.38
         y = 1.61 * scores[1] - 0.01
 
-        row = {'survival_selfexpression': x, 'traditional_secular': y}
-        if isinstance(keys, tuple):
-            for col, val in zip(group_cols, keys):
-                row[col] = val
-        else:
-            row[group_cols[0]] = keys
+        row = {'survival_selfexpression': x, 'traditional_secular': y,
+               'n_valid': n_valid,
+               'fully_valid': n_valid == len(QUESTIONS)}
+        for col, val in zip(group_cols, keys_tuple):
+            row[col] = val
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -456,18 +466,40 @@ def plot_combined_map(baseline_df, pca_gen, out_path: Path,
             if mdf.empty:
                 continue
 
+            full_mdf = mdf[mdf['fully_valid']]
+            partial_mdf = mdf[~mdf['fully_valid']]
+
             xs = mdf['survival_selfexpression'].values
             ys = mdf['traditional_secular'].values
             cx, cy = xs.mean(), ys.mean()
 
-            ax.scatter(xs, ys, c=color, s=50, alpha=0.40,
-                       edgecolors=color, linewidth=0.5, zorder=6)
+            # Filled markers for fully-valid points
+            if not full_mdf.empty:
+                ax.scatter(full_mdf['survival_selfexpression'],
+                           full_mdf['traditional_secular'],
+                           c=color, s=50, alpha=0.40,
+                           edgecolors=color, linewidth=0.5, zorder=6)
+            # Hollow markers for partially-imputed points
+            if not partial_mdf.empty:
+                ax.scatter(partial_mdf['survival_selfexpression'],
+                           partial_mdf['traditional_secular'],
+                           facecolors='none', edgecolors=color,
+                           s=50, alpha=0.7, linewidth=1.2, zorder=6)
+
             for sx, sy in zip(xs, ys):
                 ax.plot([cx, sx], [cy, sy],
                         color=color, alpha=0.15, linewidth=0.7, zorder=5)
-            ax.scatter(cx, cy, c=color, s=320, marker='*',
-                       edgecolors='black', linewidth=1.1, zorder=10)
-            ax.annotate(model_label(model), xy=(cx, cy),
+
+            all_valid = len(full_mdf) == len(mdf)
+            if all_valid:
+                ax.scatter(cx, cy, c=color, s=320, marker='*',
+                           edgecolors='black', linewidth=1.1, zorder=10)
+                label_text = model_label(model)
+            else:
+                ax.scatter(cx, cy, facecolors='white', s=320, marker='*',
+                           edgecolors=color, linewidth=1.8, zorder=10)
+                label_text = f"{model_label(model)}  ({len(full_mdf)}/{len(mdf)})"
+            ax.annotate(label_text, xy=(cx, cy),
                         xytext=(8, 5), textcoords='offset points',
                         fontsize=7.5, fontweight='bold',
                         bbox=dict(boxstyle='round,pad=0.2', facecolor=color,
@@ -498,11 +530,23 @@ def plot_combined_map(baseline_df, pca_gen, out_path: Path,
                    loc='lower right', fontsize=7.5,
                    title_fontsize=8, framealpha=0.9)
 
+    has_imputed = (
+        ('fully_valid' in stoch_coords.columns and (~stoch_coords['fully_valid']).any())
+        or ('fully_valid' in prom_coords.columns and (~prom_coords['fully_valid']).any())
+    )
+    impute_subtitle = (
+        '\nFilled = all 10 questions valid    Hollow = ≥1 question imputed'
+        ' (slot contributes 0 to the score)    ★ hollow centroid + label "(n_full/N)" '
+        'when not all points fully valid    (refer to refusal heatmap for which questions were refused)'
+        if has_imputed else ''
+    )
+
     fig.suptitle(
         'Variance Decomposition — Cultural Map Clouds\n'
         f'Left: seed uncertainty (stochastic, temp=1.0)  |  '
         f'Right: prompt wording uncertainty (prompt sensitivity, temp={prompt_temp})\n'
-        'Larger cloud = greater instability from that source',
+        'Larger cloud = greater instability from that source'
+        f'{impute_subtitle}',
         fontsize=13, fontweight='bold', y=1.01
     )
     plt.tight_layout()
@@ -548,10 +592,13 @@ def print_report(decomp: pd.DataFrame) -> None:
                   f"NSR={r['noise_to_signal']:.2f}  "
                   f"(dominant: {dominant})")
 
-    # Best behaved models
+    # Best behaved models — skip models with NaN NSR (API models without σ_seed)
     print("\n  Average NSR by model (lower = more reliable):")
     avg_nsr = decomp.groupby('model')['noise_to_signal'].mean().sort_values()
     for model, nsr in avg_nsr.items():
+        if pd.isna(nsr):
+            print(f"    {model_label(model):<22s}  n/a (σ_seed not measured — API model)")
+            continue
         bar = '█' * int(nsr * 5)
         print(f"    {model_label(model):<22s}  {nsr:.3f}  {bar}")
 

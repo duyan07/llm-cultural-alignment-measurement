@@ -26,7 +26,6 @@ import sys
 import json
 import math
 import argparse
-import hashlib
 from pathlib import Path
 from datetime import datetime
 from collections import Counter

@@ -15,8 +15,8 @@ Usage:
     python scripts/analysis/visualize_stochastic.py --flat data/results/stochastic/stochastic_flat_<ts>.csv
 """
 
+import sys
 import argparse
-import json
 from pathlib import Path
 
 import pandas as pd
@@ -24,49 +24,23 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.gridspec import GridSpec
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from src.viz_common import (
+    QUESTION_ORDER,
+    QUESTION_LABELS,
+    NUMERIC_QUESTIONS,
+    MODEL_PARAMS,
+    model_label_multiline as model_label,
+    parse_value,
+)
 
 RESULTS_DIR = Path("data/results/stochastic")
 OUTPUTS_DIR = Path("outputs/stochastic")
 
-QUESTION_ORDER = ['A008', 'A165', 'E018', 'E025', 'F063', 'F118', 'F120', 'G006', 'Y002', 'Y003']
-QUESTION_LABELS = {
-    'A008': 'Happiness\n(1–4)',
-    'A165': 'Trust\n(A/B)',
-    'E018': 'Authority\n(1–3)',
-    'E025': 'Petition\n(A/B/C)',
-    'F063': 'God\n(1–10)',
-    'F118': 'Homosexuality\n(1–10)',
-    'F120': 'Abortion\n(1–10)',
-    'G006': 'Nationality\n(1–4)',
-    'Y002': 'Post-Mat.\n(rank 2)',
-    'Y003': 'Autonomy\n(pick 5)',
-}
-
-NUMERIC_QUESTIONS = {'A008', 'E018', 'F063', 'F118', 'F120', 'G006'}
 CATEGORICAL_QUESTIONS = {'A165', 'E025'}
 MULTI_QUESTIONS = {'Y002', 'Y003'}
-
-# Parameter counts for display labels. Add new models here as needed.
-MODEL_PARAMS = {
-    'gemma2:2b':            '2B',
-    'phi3:mini':            '3.8B',
-    'qwen2.5:1.5b':         '1.5B',
-    'qwen2.5:3b':           '3B',
-    'qwen2.5:7b':           '7B',
-    'mistral:7b':           '7B',
-    'llama3.1:8b':          '8B',
-    'yi:6b':                '6B',
-    'salmatrafi/acegpt:7b': '7B',
-}
-
-
-def model_label(name: str) -> str:
-    """Short display label with parameter count, e.g. 'qwen2.5 (7B)'."""
-    short = name.split('/')[-1].split(':')[0]   # e.g. 'qwen2.5', 'gemma2'
-    params = MODEL_PARAMS.get(name)
-    return f"{short}\n({params})" if params else short
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
@@ -106,14 +80,6 @@ def load_all_data(flat_path=None, model_set=None):
     print(f"Loaded {len(paths)} file(s) — {len(df)} rows, "
           f"{df['model'].nunique()} models: {sorted(df['model'].unique())}")
     return df
-
-
-def parse_value(v):
-    """Deserialise JSON-encoded parsed_value."""
-    try:
-        return json.loads(v)
-    except (json.JSONDecodeError, TypeError):
-        return None
 
 
 # ── Figure 1: per-question distributions ────────────────────────────────────
@@ -337,7 +303,6 @@ def main():
     # Figure 2: stability summary heatmap (all models) — recomputed from merged flat data
     # We recompute mode_consistency directly rather than relying on summary CSVs,
     # which may not exist for all runs or may cover different model sets.
-    import math
     from collections import Counter
 
     summary_rows = []

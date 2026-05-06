@@ -30,28 +30,14 @@ from glob import glob
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from src.geo_data import (
-    COUNTRY_NAMES, ZONE_COLORS, ISO3_TO_ZONE,
-    load_iso3_lookup, quadrant_label, typical_countries,
-)
+from src.geo_data import ZONE_COLORS, quadrant_label, typical_countries
+from src.viz_common import load_baseline
 
 # Paths
-BASELINE_PATH = Path("data/processed/cultural_map_coordinates.csv")
-IVS_PATH = Path("data/processed/ivs_2005-2022.csv")
 RESULTS_DIR = Path("data/results/baseline")
 OUTPUTS_DIR = Path("outputs/baseline")
 
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def load_baseline():
-    """Load 88-country baseline and annotate with ISO-3, name, and cultural zone."""
-    df = pd.read_csv(BASELINE_PATH)
-    iso_lookup = load_iso3_lookup(IVS_PATH)
-    df['iso3'] = df['country_code'].map(iso_lookup).fillna('???')
-    df['name'] = df['iso3'].map(COUNTRY_NAMES).fillna(df['iso3'])
-    df['zone'] = df['iso3'].map(ISO3_TO_ZONE).fillna('Other')
-    return df
 
 
 def load_model_results(results_path=None, tone=None, model_set=None):

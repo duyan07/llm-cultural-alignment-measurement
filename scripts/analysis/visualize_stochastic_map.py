@@ -15,7 +15,6 @@ Usage:
 """
 
 import sys
-import json
 import argparse
 from pathlib import Path
 
@@ -31,39 +30,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from src.response_parser import ResponseParser
 from src.prompts import QUESTIONS
 from src.cultural_map import CulturalMapGenerator
-from src.geo_data import COUNTRY_NAMES, ISO3_TO_ZONE, ZONE_COLORS, load_iso3_lookup
+from src.geo_data import ZONE_COLORS
+from src.viz_common import (
+    MODEL_COLORS,
+    model_label_inline as model_label,
+    parse_value,
+    load_pca,
+    load_baseline,
+)
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 
 RESULTS_DIR  = Path("data/results/stochastic")
-BASELINE_PATH = Path("data/processed/cultural_map_coordinates.csv")
-IVS_PATH      = Path("data/processed/ivs_2005-2022.csv")
-OUTPUTS_DIR   = Path("outputs/stochastic")
-
-# ── Model colours (same palette as baseline visualizer) ──────────────────────
-
-MODEL_COLORS = [
-    '#e41a1c', '#ff7f00', '#984ea3', '#4daf4a',
-    '#377eb8', '#a65628', '#f781bf', '#999999', '#17becf',
-]
-
-MODEL_PARAMS = {
-    'gemma2:2b':            '2B',
-    'phi3:mini':            '3.8B',
-    'qwen2.5:1.5b':         '1.5B',
-    'qwen2.5:3b':           '3B',
-    'qwen2.5:7b':           '7B',
-    'mistral:7b':           '7B',
-    'llama3.1:8b':          '8B',
-    'yi:6b':                '6B',
-    'salmatrafi/acegpt:7b': '7B',
-}
-
-
-def model_label(name: str) -> str:
-    short  = name.split('/')[-1].split(':')[0]
-    params = MODEL_PARAMS.get(name)
-    return f"{short} ({params})" if params else short
+OUTPUTS_DIR  = Path("outputs/stochastic")
 
 
 # ── Data loading ─────────────────────────────────────────────────────────────
@@ -95,60 +74,42 @@ def load_flat(flat_path=None, model_set=None) -> pd.DataFrame:
     return df
 
 
-def load_pca() -> CulturalMapGenerator:
-    """Re-fit PCA on IVS data to obtain the projection used by the baseline."""
-    print("Fitting PCA on IVS data...")
-    ivs_df = pd.read_csv(IVS_PATH, low_memory=False)
-    gen = CulturalMapGenerator(ivs_df)
-    gen.fit()
-    print("PCA ready.\n")
-    return gen
-
-
-def load_baseline() -> pd.DataFrame:
-    """Load 88-country baseline with ISO-3 and zone annotations."""
-    df = pd.read_csv(BASELINE_PATH)
-    iso_lookup = load_iso3_lookup(IVS_PATH)
-    df['iso3'] = df['country_code'].map(iso_lookup).fillna('???')
-    df['zone'] = df['iso3'].map(ISO3_TO_ZONE).fillna('Other')
-    return df
-
-
 # ── Coordinate computation ───────────────────────────────────────────────────
 
-def parse_stored(value_str):
-    """Deserialise JSON-encoded parsed_value from the flat CSV."""
-    try:
-        return json.loads(value_str)
-    except (json.JSONDecodeError, TypeError):
-        return None
-
-
-def seed_to_coordinates(seed_df: pd.DataFrame, pca_gen: CulturalMapGenerator):
+def seed_to_coordinates(seed_df: pd.DataFrame,
+                        pca_gen: CulturalMapGenerator):
     """
-    Convert one seed's responses (all 10 questions) to (x, y) map coordinates.
+    Convert one seed's responses to (x, y) map coordinates by summing only
+    the valid question contributions.
 
-    Returns (x, y) or (nan, nan) if any question is missing a valid response.
+    Each invalid response slot contributes 0 to the PC score (mathematically
+    equivalent to imputing the IVS standardised mean). Returns (x, y, n_valid)
+    where n_valid is the number of slots that contributed real data; if zero
+    valid slots, returns (nan, nan, 0).
     """
-    question_values = {}
+    standardized = []
+    n_valid = 0
 
     for question_id, question_info in QUESTIONS.items():
         row = seed_df[seed_df['question_id'] == question_id]
-        if row.empty or not row.iloc[0]['is_valid']:
-            return np.nan, np.nan
+        invalid = row.empty or not row.iloc[0]['is_valid']
+        numeric = None
+        if not invalid:
+            parsed = parse_value(row.iloc[0]['parsed_value'])
+            numeric = ResponseParser.to_ivs_numeric(parsed, question_info)
 
-        parsed = parse_stored(row.iloc[0]['parsed_value'])
-        numeric = ResponseParser.to_ivs_numeric(parsed, question_info)
         if numeric is None:
-            return np.nan, np.nan
+            standardized.append(0.0)
+            continue
 
-        question_values[question_id] = numeric
+        standardized.append(
+            (numeric - pca_gen.question_means_[question_id]) /
+            pca_gen.question_stds_[question_id]
+        )
+        n_valid += 1
 
-    # Standardise using IVS-fitted means/stds, then project through PCA
-    standardized = [
-        (question_values[qid] - pca_gen.question_means_[qid]) / pca_gen.question_stds_[qid]
-        for qid in QUESTIONS.keys()
-    ]
+    if n_valid == 0:
+        return np.nan, np.nan, 0
 
     pca_scores = pca_gen.pca_model.transform(
         np.array(standardized).reshape(1, -1)
@@ -156,39 +117,59 @@ def seed_to_coordinates(seed_df: pd.DataFrame, pca_gen: CulturalMapGenerator):
 
     x = 1.81 * pca_scores[0] + 0.38
     y = 1.61 * pca_scores[1] - 0.01
-    return x, y
+    return x, y, n_valid
 
 
 def compute_all_coordinates(flat_df: pd.DataFrame,
                             pca_gen: CulturalMapGenerator) -> pd.DataFrame:
     """
-    Compute (x, y) for every (model, seed) combination.
+    Compute (x, y) for every (model, seed) combination using pointwise
+    imputation: invalid slots contribute 0 to the PC score.
 
-    Returns a DataFrame with columns:
-        model, seed, survival_selfexpression, traditional_secular
+    Models with zero valid responses anywhere (likely API/system errors)
+    are excluded entirely.
     """
+    excluded_models = set()
+    for model in flat_df['model'].unique():
+        md = flat_df[flat_df['model'] == model]
+        if md['is_valid'].sum() == 0:
+            excluded_models.add(model)
+
+    if excluded_models:
+        print(f"  Excluding {len(excluded_models)} model(s) with zero valid "
+              f"responses (likely API/system error):")
+        for m in sorted(excluded_models):
+            print(f"    - {model_label(m)}")
+
     rows = []
-    models = flat_df['model'].unique()
+    models = [m for m in flat_df['model'].unique() if m not in excluded_models]
 
     for model in models:
         model_df = flat_df[flat_df['model'] == model]
         seeds = model_df['seed'].unique()
-        n_valid = 0
+        n_mapped = 0
+        n_full = 0
 
         for seed in seeds:
             seed_df = model_df[model_df['seed'] == seed]
-            x, y = seed_to_coordinates(seed_df, pca_gen)
+            x, y, n_valid = seed_to_coordinates(seed_df, pca_gen)
+            mapped = not (np.isnan(x) or np.isnan(y))
             rows.append({
                 'model': model,
                 'seed': seed,
                 'survival_selfexpression': x,
                 'traditional_secular': y,
-                'valid': not (np.isnan(x) or np.isnan(y)),
+                'n_valid': n_valid,
+                'fully_valid': n_valid == len(QUESTIONS),
+                'valid': mapped,
             })
-            if not (np.isnan(x) or np.isnan(y)):
-                n_valid += 1
+            if mapped:
+                n_mapped += 1
+            if n_valid == len(QUESTIONS):
+                n_full += 1
 
-        print(f"  {model_label(model):<22s}  {n_valid}/{len(seeds)} seeds mapped")
+        print(f"  {model_label(model):<22s}  {n_mapped}/{len(seeds)} seeds mapped"
+              f"  ({n_full} fully-valid, {n_mapped - n_full} with imputed slots)")
 
     return pd.DataFrame(rows)
 
@@ -230,6 +211,7 @@ def plot_stochastic_map(coords_df: pd.DataFrame,
     # ── Per-model seed clouds + centroids ──
     models = coords_df['model'].unique()
     model_handles = []
+    has_imputed_any = False
 
     for idx, model in enumerate(models):
         color = MODEL_COLORS[idx % len(MODEL_COLORS)]
@@ -240,28 +222,46 @@ def plot_stochastic_map(coords_df: pd.DataFrame,
             print(f"  Warning: no valid coordinates for {model}, skipping.")
             continue
 
+        full_mdf = mdf[mdf['fully_valid']]
+        partial_mdf = mdf[~mdf['fully_valid']]
+        if not partial_mdf.empty:
+            has_imputed_any = True
+
+        # Filled markers for fully-valid points
+        if not full_mdf.empty:
+            ax.scatter(full_mdf['survival_selfexpression'],
+                       full_mdf['traditional_secular'],
+                       c=color, s=60, alpha=0.45,
+                       edgecolors=color, linewidth=0.5, zorder=6)
+        # Hollow markers for partially-imputed points
+        if not partial_mdf.empty:
+            ax.scatter(partial_mdf['survival_selfexpression'],
+                       partial_mdf['traditional_secular'],
+                       facecolors='none', edgecolors=color,
+                       s=60, alpha=0.7, linewidth=1.2, zorder=6)
+
         xs = mdf['survival_selfexpression'].values
         ys = mdf['traditional_secular'].values
-
-        # Seed dots (small, semi-transparent)
-        ax.scatter(xs, ys,
-                   c=color, s=60, alpha=0.45,
-                   edgecolors=color, linewidth=0.5, zorder=6)
-
-        # Ellipse-like visual: draw lines from centroid to each seed
         cx, cy = xs.mean(), ys.mean()
+
+        # Spokes from centroid
         for sx, sy in zip(xs, ys):
             ax.plot([cx, sx], [cy, sy],
                     color=color, alpha=0.2, linewidth=0.8, zorder=5)
 
-        # Centroid star
-        ax.scatter(cx, cy,
-                   c=color, s=380, marker='*',
-                   edgecolors='black', linewidth=1.2, zorder=10)
+        # Centroid star — solid if all points fully valid, hollow otherwise
+        all_valid = len(full_mdf) == len(mdf)
+        if all_valid:
+            ax.scatter(cx, cy, c=color, s=380, marker='*',
+                       edgecolors='black', linewidth=1.2, zorder=10)
+            label_text = label
+        else:
+            ax.scatter(cx, cy, facecolors='white', s=380, marker='*',
+                       edgecolors=color, linewidth=2.0, zorder=10)
+            label_text = f"{label}  ({len(full_mdf)}/{len(mdf)})"
 
-        # Centroid label
         ax.annotate(
-            label,
+            label_text,
             xy=(cx, cy), xytext=(10, 7),
             textcoords='offset points',
             fontsize=8.5, fontweight='bold',
@@ -270,15 +270,16 @@ def plot_stochastic_map(coords_df: pd.DataFrame,
             zorder=11,
         )
 
-        # Std annotation below label
-        std_x = xs.std()
-        std_y = ys.std()
-        ax.annotate(
-            f"σ=({std_x:.2f}, {std_y:.2f})",
-            xy=(cx, cy), xytext=(10, -8),
-            textcoords='offset points',
-            fontsize=6.5, color=color, zorder=11,
-        )
+        # σ from fully-valid points only; omit if too few
+        if len(full_mdf) >= 2:
+            std_x = full_mdf['survival_selfexpression'].std()
+            std_y = full_mdf['traditional_secular'].std()
+            ax.annotate(
+                f"σ=({std_x:.2f}, {std_y:.2f})",
+                xy=(cx, cy), xytext=(10, -8),
+                textcoords='offset points',
+                fontsize=6.5, color=color, zorder=11,
+            )
 
         model_handles.append(
             plt.Line2D([0], [0], marker='*', color='w',
@@ -291,9 +292,17 @@ def plot_stochastic_map(coords_df: pd.DataFrame,
                   fontsize=12, fontweight='bold', labelpad=8)
     ax.set_ylabel('Traditional  ←               →  Secular Values',
                   fontsize=12, fontweight='bold', labelpad=8)
+    impute_subtitle = (
+        '\n● filled point = all 10 questions valid    ○ hollow point = ≥1 question imputed'
+        ' (slot contributes 0 to the score)    ★ hollow centroid + label "(n_full/N)" '
+        'when not all points fully valid    σ from fully-valid subset only'
+        if has_imputed_any else ''
+    )
+
     ax.set_title(
         f'Stochastic Sampling Uncertainty on the Cultural Map\n'
-        f'({n_seeds} seeds per model, temperature=1.0 — seed cloud shows sampling noise)',
+        f'({n_seeds} seeds per model, temperature=1.0 — seed cloud shows sampling noise)'
+        f'{impute_subtitle}',
         fontsize=13, fontweight='bold', pad=14,
     )
 

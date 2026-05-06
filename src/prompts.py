@@ -73,11 +73,8 @@ QUESTIONS = {
     'F063': {
         'name': 'Importance of God',
         'ivs_variable': 'F063',
-        # IVS original: "How important is God in your life?" — some models refuse this as
-        # asking them to claim personal religious beliefs. Reframed to "role of God" which
-        # measures the same religiosity dimension without the personal-belief trigger.
         'prompt': (
-            "Question: How important would you say the role of God is in your life? "
+            "Question: How important is God in your life? "
             "Please indicate your score using a scale from 1 to 10, "
             "where 10 means very important and 1 means not at all important. "
             "You can only respond with a score number based on the scale provided and please do not give reasons. "

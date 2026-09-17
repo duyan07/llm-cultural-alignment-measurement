@@ -1,5 +1,5 @@
 """
-Prompt Sensitivity Visualization  (Stage 4)
+Prompt Sensitivity Visualization
 
 Generates four figures from prompt_sensitivity_flat_*.csv:
 
@@ -202,13 +202,11 @@ def plot_tone_comparison(flat_df: pd.DataFrame, out_path: Path) -> None:
         ax.set_ylabel('Response value', fontsize=8)
         ax.grid(True, alpha=0.2)
 
-    # Legend
     handles = [mpatches.Patch(color=TONE_COLORS[t], label=t.capitalize())
                for t in tones]
     fig.legend(handles=handles, loc='lower right', fontsize=9,
                title='Tone', title_fontsize=9)
 
-    # Hide unused axes
     for ax in axes[n_q:]:
         ax.set_visible(False)
 
@@ -313,7 +311,6 @@ def plot_variant_map(coords_df: pd.DataFrame,
                      out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(17, 12))
 
-    # Country dots
     zone_handles = []
     for zone, color in ZONE_COLORS.items():
         zd = baseline_df[baseline_df['zone'] == zone]
@@ -533,7 +530,6 @@ def plot_tone_interaction(flat_df: pd.DataFrame, out_path: Path) -> None:
         ax.set_title(f'{tone.capitalize()} tone', fontsize=11, fontweight='bold',
                      color=TONE_COLORS[tone])
 
-        # Annotate cells
         for i, qid in enumerate(QUESTION_ORDER):
             for j, model in enumerate(models):
                 val = pivot.loc[qid, model] if (qid in pivot.index and
@@ -544,7 +540,6 @@ def plot_tone_interaction(flat_df: pd.DataFrame, out_path: Path) -> None:
                     ax.text(j, i, f'{val:.2f}',
                             ha='center', va='center', fontsize=7, color=txt_col)
 
-    # Shared colourbar on the right
     fig.subplots_adjust(right=0.88, wspace=0.08)
     cbar_ax = fig.add_axes([0.90, 0.15, 0.02, 0.7])
     sm = plt.cm.ScalarMappable(
@@ -653,13 +648,9 @@ def main():
     ts = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
     ms_tag = f"_{args.model_set}" if args.model_set else ''
 
-    # Figure 1: flip-rate heatmap
     plot_flip_heatmap(flat_df, OUTPUTS_DIR / f"flip_rate_heatmap{ms_tag}_{ts}.png")
-
-    # Figure 2: tone comparison (numeric questions)
     plot_tone_comparison(flat_df, OUTPUTS_DIR / f"tone_comparison{ms_tag}_{ts}.png")
 
-    # Figure 3: cultural map variant clouds
     pca_gen     = load_pca()
     baseline_df = load_baseline()
     print("\nComputing per-variant coordinates...")
@@ -667,10 +658,7 @@ def main():
     plot_variant_map(coords_df, baseline_df,
                      OUTPUTS_DIR / f"prompt_sensitivity_cultural_map{ms_tag}_{ts}.png")
 
-    # Figure 4: tone interaction heatmap
     plot_tone_interaction(flat_df, OUTPUTS_DIR / f"tone_interaction{ms_tag}_{ts}.png")
-
-    # Figure 5: refusal-rate heatmap
     plot_refusal_heatmap(flat_df, OUTPUTS_DIR / f"refusal_rates{ms_tag}_{ts}.png")
 
 

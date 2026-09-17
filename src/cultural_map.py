@@ -45,12 +45,7 @@ class CulturalMapGenerator:
     ]
 
     def __init__(self, ivs_df):
-        """
-        Initialize with merged IVS dataframe.
-
-        Args:
-            ivs_df: DataFrame with merged WVS+EVS data containing all 10 questions
-        """
+        """Initialize with a merged IVS dataframe containing all 10 questions."""
         self.ivs_df = ivs_df.copy()
         self.country_col = 'S024'  # Country-wave identifier
         self.weight_col = 'S017'   # Individual observation weight
@@ -66,12 +61,10 @@ class CulturalMapGenerator:
         """Extract the 10 questions + metadata from IVS dataframe."""
         required_cols = self.QUESTIONS + [self.country_col, self.weight_col]
 
-        # Check which columns exist
         missing = [col for col in required_cols if col not in self.ivs_df.columns]
         if missing:
             raise ValueError(f"Missing required columns: {missing}")
 
-        # Extract subset
         df = self.ivs_df[required_cols].copy()
 
         print(f"Extracted {len(df):,} individual responses across {len(self.QUESTIONS)} questions")
@@ -99,7 +92,6 @@ class CulturalMapGenerator:
         print(f"  Initial rows: {initial_rows:,}")
         print(f"  After removing missing: {len(df_clean):,} ({removed:,} removed)")
 
-        # Show missing rate per question
         print("\n  Missing data by question:")
         for q in self.QUESTIONS:
             missing_pct = (df[q].isna().sum() / initial_rows) * 100
@@ -118,7 +110,6 @@ class CulturalMapGenerator:
 
         df_std = df.copy()
 
-        # Standardize each question separately
         for q in self.QUESTIONS:
             mean = df[q].mean()
             std = df[q].std()
@@ -140,23 +131,19 @@ class CulturalMapGenerator:
         """
         print("\nApplying PCA...")
 
-        # Extract question columns only
         X = df_std[self.QUESTIONS].values
         weights = df_std[self.weight_col].values
 
-        # Apply PCA with 2 components
         pca = PCA(n_components=2)
 
-        # Note: sklearn's PCA doesn't directly support sample weights
-        # For full replication, we'd need to use weighted covariance
-        # For now, we'll use unweighted PCA (common approximation)
+        # sklearn's PCA has no sample-weight support, so this is an unweighted
+        # approximation of the paper's weighted-covariance PCA.
         components = pca.fit_transform(X)
 
         print(f"  Variance explained by PC1: {pca.explained_variance_ratio_[0]:.1%}")
         print(f"  Variance explained by PC2: {pca.explained_variance_ratio_[1]:.1%}")
         print(f"  Total variance explained: {pca.explained_variance_ratio_.sum():.1%}")
 
-        # Store components in dataframe
         df_std['PC1'] = components[:, 0]
         df_std['PC2'] = components[:, 1]
 
@@ -194,13 +181,11 @@ class CulturalMapGenerator:
         """
         print("\nAggregating to country level...")
 
-        # Group by country-wave and calculate weighted means
         country_wave_means = []
 
         for country_wave, group in df_pca.groupby(self.country_col):
             weights = group[self.weight_col]
 
-            # Weighted mean
             pc1_mean = np.average(group['PC1_rescaled'], weights=weights)
             pc2_mean = np.average(group['PC2_rescaled'], weights=weights)
 
@@ -228,32 +213,16 @@ class CulturalMapGenerator:
         return df_final
 
     def fit(self):
-        """
-        Execute the full pipeline to generate cultural map coordinates.
-
-        Returns:
-            DataFrame with country-level coordinates on the cultural map
-        """
+        """Run the full pipeline and return country-level cultural map coordinates."""
         print("="*60)
         print("GENERATING CULTURAL MAP COORDINATES")
         print("="*60)
 
-        # Step 1: Extract questions
         df = self._extract_questions()
-
-        # Step 2: Clean data
         df_clean = self._preprocess_responses(df)
-
-        # Step 3: Standardize
         df_std = self._standardize_responses(df_clean)
-
-        # Step 4: PCA
         df_pca = self._apply_pca(df_std)
-
-        # Step 5: Rescale
         df_rescaled = self._rescale_components(df_pca)
-
-        # Step 6: Aggregate to country level
         self.country_coords = self._aggregate_by_country(df_rescaled)
 
         print("\n" + "="*60)

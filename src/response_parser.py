@@ -11,34 +11,19 @@ from typing import Optional, Union, List, Any
 
 class ResponseParser:
     """
-    Parses LLM responses to extract structured answers.
-
-    Handles:
-    - Numeric responses (1-4, 1-10 scales)
-    - Categorical responses (A/B/C choices)
-    - Multi-numeric (Y002: choose 2 numbers)
-    - Multi-categorical (Y003: choose up to 5 items)
+    Extracts structured answers from LLM text responses, matching one of the
+    four IVS question formats: numeric, categorical, multi-numeric (Y002),
+    or multi-categorical (Y003).
     """
 
     @staticmethod
     def parse_numeric(response: str, scale: tuple = (1, 10)) -> Optional[float]:
-        """
-        Extract numeric answer from response.
-
-        Args:
-            response: LLM text response
-            scale: Tuple of (min, max) valid values
-
-        Returns:
-            Numeric value or None if invalid
-        """
-        # Look for numbers in the response
+        """Extract the first in-range number from response, or None if invalid."""
         numbers = re.findall(r'\b\d+\.?\d*\b', response)
 
         if not numbers:
             return None
 
-        # Try first number found
         try:
             value = float(numbers[0])
             min_val, max_val = scale
@@ -52,23 +37,11 @@ class ResponseParser:
 
     @staticmethod
     def parse_categorical(response: str, options: List[str]) -> Optional[str]:
-        """
-        Extract categorical answer from response.
-
-        Args:
-            response: LLM text response
-            options: List of valid options (e.g., ['A', 'B', 'C'])
-
-        Returns:
-            Selected option or None if invalid
-        """
-        # Convert to uppercase for matching
+        """Extract a single option letter (e.g. 'A') from response, or None if none matched."""
         response_upper = response.upper()
 
-        # Look for option letters
         for option in options:
             option_upper = option.upper()
-            # Match option as standalone letter
             if re.search(rf'\b{option_upper}\b', response_upper):
                 return option
 
@@ -77,24 +50,12 @@ class ResponseParser:
     @staticmethod
     def parse_multi_numeric(response: str, count: int = 2,
                           options: List[int] = [1, 2, 3, 4]) -> Optional[List[int]]:
-        """
-        Extract multiple numeric answers (e.g., Y002: choose 2 from 4).
-
-        Args:
-            response: LLM text response
-            count: Expected number of choices
-            options: Valid numeric options
-
-        Returns:
-            List of selected numbers or None if invalid
-        """
-        # Find all numbers in response
+        """Extract `count` distinct numbers from response (e.g. Y002: choose 2 from 4)."""
         numbers = re.findall(r'\b\d+\b', response)
 
         if not numbers:
             return None
 
-        # Convert to int and filter to valid options
         selected = []
         for num_str in numbers:
             try:
@@ -106,7 +67,6 @@ class ResponseParser:
             except ValueError:
                 continue
 
-        # Return if we got the expected count
         if len(selected) == count:
             return selected
 
@@ -115,43 +75,22 @@ class ResponseParser:
     @staticmethod
     def parse_multi_categorical(response: str, options: List[str],
                                max_count: int = 5) -> Optional[List[str]]:
-        """
-        Extract multiple categorical answers (e.g., Y003: choose up to 5).
-
-        Args:
-            response: LLM text response
-            options: List of valid option strings
-            max_count: Maximum number of selections allowed
-
-        Returns:
-            List of selected options or None if invalid
-        """
+        """Extract up to `max_count` matching options from response (e.g. Y003: choose up to 5)."""
         response_lower = response.lower()
         selected = []
 
         for option in options:
             option_lower = option.lower()
-            # Check if option appears in response
             if option_lower in response_lower:
                 selected.append(option)
                 if len(selected) >= max_count:
                     break
 
-        # Return selections if we got at least one
         return selected if selected else None
 
     @staticmethod
     def parse_by_type(response: str, question_info: dict) -> Optional[Any]:
-        """
-        Parse response based on question type from prompts.QUESTIONS.
-
-        Args:
-            response: LLM text response
-            question_info: Question metadata from prompts.py
-
-        Returns:
-            Parsed value in appropriate format
-        """
+        """Dispatch to the parser matching question_info['response_type']."""
         response_type = question_info['response_type']
 
         if response_type == 'numeric':
@@ -177,20 +116,7 @@ class ResponseParser:
 
     @staticmethod
     def validate_response(response: str, question_info: dict) -> dict:
-        """
-        Parse and validate a response, returning detailed results.
-
-        Args:
-            response: LLM text response
-            question_info: Question metadata
-
-        Returns:
-            Dictionary with:
-                - raw_response: Original text
-                - parsed_value: Extracted value
-                - is_valid: Whether parsing succeeded
-                - response_type: Type of question
-        """
+        """Parse a response and return it alongside validity and question metadata."""
         parsed = ResponseParser.parse_by_type(response, question_info)
 
         return {
@@ -207,18 +133,13 @@ class ResponseParser:
         """
         Convert a parsed response to its IVS numeric equivalent for PCA input.
 
-        The PCA pipeline expects all inputs to be numeric. Categorical and
+        The PCA pipeline expects all inputs to be numeric, so categorical and
         multi-choice questions need conversion:
           - categorical: map letter position to ordinal (A=1, B=2, C=3)
           - Y002: derive post-materialist index (1-4) from two chosen goal numbers
           - Y003: binary autonomy index (1 if 'Independence' selected, else 0)
 
-        Args:
-            parsed_value: Output of parse_by_type()
-            question_info: Question metadata from prompts.QUESTIONS
-
-        Returns:
-            Float in IVS numeric coding, or None if conversion fails
+        Returns None if conversion fails.
         """
         if parsed_value is None:
             return None

@@ -13,35 +13,18 @@ class IVSBuilder:
     """
 
     def __init__(self, wvs_path, evs_path):
-        """
-        Initialize builder with paths to WVS and EVS data files.
-
-        Args:
-            wvs_path: Path to WVS CSV file
-            evs_path: Path to EVS CSV file
-        """
         self.wvs_path = wvs_path
         self.evs_path = evs_path
 
     def load_wvs(self, waves=[5, 6, 7]):
-        """
-        Load and filter WVS data for specified waves.
-
-        Args:
-            waves: List of wave numbers to include (default: [5, 6, 7] for 2005-2022)
-
-        Returns:
-            DataFrame filtered to specified waves
-        """
+        """Load WVS data, filtered to the given waves (default: waves 5-7, 2005-2022)."""
         print(f"Loading WVS data from {self.wvs_path} for waves {waves}...")
         df = pd.read_csv(self.wvs_path, low_memory=False)
         print(f"Successfully loaded WVS data!")
 
-        # Verify wave variable exists
         if "s002" not in df.columns:
             raise ValueError("Wave variable 's002' not found in WVS data.")
 
-        # Filter to requested waves
         df_filtered = df[df["s002"].isin(waves)].copy()
 
         print(f"  Total rows: {len(df):,}")
@@ -52,24 +35,15 @@ class IVSBuilder:
         return df_filtered
 
     def load_evs(self, waves=[4, 5]):
-        """
-        Load and filter EVS data for specified waves.
-
-        Args:
-            waves: List of wave numbers to include (default: [4, 5] for 2008-2017)
-
-        Returns:
-            DataFrame filtered to specified waves
-        """
+        """Load EVS data, filtered to the given waves (default: waves 4-5, 2008-2017)."""
         print(f"\nLoading EVS data from {self.evs_path} for waves {waves}...")
         df = pd.read_csv(self.evs_path, low_memory=False)
         print("Successfully loaded EVS data!")
 
-        # Verify wave variable exists (EVS uses different variable name)
+        # EVS uses a different wave variable name than WVS ('S002EVS' vs 's002')
         if "S002EVS" not in df.columns:
             raise ValueError("Wave variable 'S002EVS' not found in EVS data.")
 
-        # Filter to requested waves
         df_filtered = df[df["S002EVS"].isin(waves)].copy()
 
         print(f"  Total rows: {len(df):,}")
@@ -80,26 +54,14 @@ class IVSBuilder:
         return df_filtered
 
     def merge(self, wvs_df, evs_df):
-        """
-        Merge WVS and EVS datasets into a single IVS dataset.
-
-        Args:
-            wvs_df: Filtered WVS DataFrame
-            evs_df: Filtered EVS DataFrame
-
-        Returns:
-            Merged IVS DataFrame sorted by respondent ID
-        """
+        """Merge WVS and EVS datasets into a single IVS dataset, sorted by respondent ID."""
         print("\nMerging WVS and EVS datasets...")
 
-        # Verify respondent ID exists in both datasets
         if "S007_01" not in wvs_df.columns or "S007_01" not in evs_df.columns:
             raise ValueError("Merge key 'S007_01' not found in one or both of the datasets.")
 
-        # Concatenate datasets (EVS first to match original methodology)
+        # EVS first to match the original methodology's ordering
         ivs = pd.concat([evs_df, wvs_df], ignore_index=True)
-
-        # Sort by respondent ID for consistency
         ivs.sort_values("S007_01", inplace=True, ignore_index=True)
 
         print(f"  Merged dataset: {len(ivs):,} rows")
@@ -113,16 +75,7 @@ class IVSBuilder:
         return ivs_df["S024"].nunique()
 
     def build_ivs(self, wvs_waves=[5, 6, 7], evs_waves=[4, 5]):
-        """
-        Execute full pipeline to build IVS dataset.
-
-        Args:
-            wvs_waves: List of WVS wave numbers to include
-            evs_waves: List of EVS wave numbers to include
-
-        Returns:
-            Merged and validated IVS DataFrame
-        """
+        """Run the full pipeline (load, merge, validate) and return the IVS DataFrame."""
         wvs = self.load_wvs(wvs_waves)
         evs = self.load_evs(evs_waves)
         ivs = self.merge(wvs, evs)
@@ -139,16 +92,14 @@ class IVSBuilder:
         print("VALIDATION")
         print("="*60)
 
-        # Duplicate check
         n_duplicates = ivs["S007_01"].duplicated().sum()
         status = "PASS" if n_duplicates == 0 else "FAIL"
         print(f"Duplicate respondent IDs (S007_01): {n_duplicates} {status}")
 
-        # Check country-wave combinations
         n_country_waves = ivs["S024"].nunique()
         print(f"Country-wave combinations: {n_country_waves}")
 
-        # Extract unique countries from S024 (S024 = country * 10 + wave)
+        # S024 encodes country * 10 + wave
         country_codes = (ivs["S024"] // 10).astype(int)
         n_countries = country_codes.nunique()
         status = "PASS" if 100 <= n_countries <= 120 else "FAIL"

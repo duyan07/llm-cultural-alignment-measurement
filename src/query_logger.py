@@ -14,29 +14,12 @@ import hashlib
 
 
 class QueryLogger:
-    """
-    Logs LLM queries and responses to JSONL file.
-
-    Each log entry contains:
-    - Timestamp
-    - Model info
-    - Prompts (system + user)
-    - Response (raw + parsed)
-    - Metadata (country, question, variant, etc.)
-    - Hash for deduplication
-    """
+    """Appends LLM queries and responses to a timestamped JSONL log file."""
 
     def __init__(self, log_dir: Path = Path("logs")):
-        """
-        Initialize logger.
-
-        Args:
-            log_dir: Directory to store log files
-        """
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create timestamped log file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.log_file = self.log_dir / f"queries_{timestamp}.jsonl"
 
@@ -52,24 +35,9 @@ class QueryLogger:
                   is_valid: bool,
                   metadata: Optional[Dict] = None,
                   error: Optional[str] = None) -> None:
-        """
-        Log a single query-response pair.
-
-        Args:
-            model: Model name
-            provider: Provider name (ollama, openai, etc.)
-            system_prompt: System message
-            user_prompt: User message
-            raw_response: Raw text response from model
-            parsed_response: Parsed/extracted answer
-            is_valid: Whether parsing succeeded
-            metadata: Additional metadata (country, question, etc.)
-            error: Error message if query failed
-        """
-        # Create prompt hash for deduplication
+        """Log a single query-response pair as one line in the JSONL file."""
         prompt_hash = self._hash_prompt(system_prompt, user_prompt, model)
 
-        # Build log entry
         entry = {
             'timestamp': datetime.now().isoformat(),
             'prompt_hash': prompt_hash,
@@ -90,17 +58,11 @@ class QueryLogger:
             'error': error
         }
 
-        # Append to log file (JSONL format)
         with open(self.log_file, 'a') as f:
             f.write(json.dumps(entry) + '\n')
 
     def log_batch(self, entries: List[Dict]) -> None:
-        """
-        Log multiple entries at once.
-
-        Args:
-            entries: List of log entry dictionaries
-        """
+        """Append multiple pre-built log entries at once."""
         with open(self.log_file, 'a') as f:
             for entry in entries:
                 f.write(json.dumps(entry) + '\n')
@@ -112,13 +74,7 @@ class QueryLogger:
         return hashlib.md5(content.encode()).hexdigest()
 
     def export_to_csv(self, output_path: Path) -> None:
-        """
-        Export log to CSV format for analysis.
-
-        Args:
-            output_path: Path to output CSV file
-        """
-        # Read all entries
+        """Flatten the JSONL log to a CSV for analysis."""
         entries = []
         with open(self.log_file, 'r') as f:
             for line in f:
@@ -128,9 +84,7 @@ class QueryLogger:
             print("No entries to export")
             return
 
-        # Write to CSV
         with open(output_path, 'w', newline='') as f:
-            # Define columns
             fieldnames = [
                 'timestamp', 'provider', 'model', 'question_id', 'country',
                 'variant', 'raw_response', 'parsed_response', 'is_valid',
@@ -208,24 +162,12 @@ class QueryLogger:
 
 
 class ProgressTracker:
-    """
-    Tracks progress through a batch of queries.
-    Useful for resuming interrupted runs.
-    """
+    """Tracks completed query hashes in a checkpoint file so interrupted runs can resume."""
 
     def __init__(self, total_queries: int, checkpoint_file: Path = Path("logs/checkpoint.json")):
-        """
-        Initialize progress tracker.
-
-        Args:
-            total_queries: Total number of queries to process
-            checkpoint_file: File to store progress
-        """
         self.total = total_queries
         self.checkpoint_file = Path(checkpoint_file)
         self.checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
-
-        # Load existing progress
         self.completed = self._load_progress()
 
     def _load_progress(self) -> set:

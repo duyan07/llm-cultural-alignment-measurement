@@ -2,9 +2,11 @@
 
 All commands are run from the **project root** so that relative `Path("data/...")` paths resolve correctly.
 
+This is one continuous pipeline — each step's output is the next step's input. The order below is the order to run them in.
+
 ---
 
-## Stage 0 — Data Preparation (one-time)
+## Data Preparation (one-time)
 
 ```bash
 # Convert raw .sav files to CSV (requires R)
@@ -18,7 +20,7 @@ python scripts/data/build_ivs.py
 
 ---
 
-## Stage 1 — Generate Cultural Map Baseline (one-time)
+## Cultural Map Baseline (one-time)
 
 ```bash
 python scripts/baseline/generate_cultural_map.py
@@ -28,7 +30,7 @@ python scripts/baseline/generate_cultural_map.py
 
 ---
 
-## Stage 2 — Baseline Replication
+## Baseline Replication
 
 ```bash
 # All models (Ollama auto-detected + any API keys set)
@@ -71,9 +73,9 @@ python scripts/baseline/visualize_baseline.py --results data/results/baseline/ba
 
 ---
 
-## Stage 3 — Stochastic Sensitivity
+## Stochastic Sensitivity
 
-Fix prompt (standard tone, variant 0), vary seed 0–9 → isolates sampling noise.
+Fix prompt (standard tone, variant 0), vary seed 0–9 → isolates sampling noise (σ_seed).
 Only Ollama models are supported (seed control requires a local runtime).
 
 ```bash
@@ -103,9 +105,9 @@ python scripts/analysis/visualize_stochastic_map.py --flat data/results/stochast
 
 ---
 
-## Stage 4 — Prompt Sensitivity
+## Prompt Sensitivity
 
-Fix seed (seed=0), vary all 30 prompt variants (3 tones × 10 variants) → isolates wording noise.
+Fix seed (seed=0), vary all 30 prompt variants (3 tones × 10 variants) → isolates wording noise (σ_prompt).
 
 ```bash
 # All models, temp=0 (for NSR analysis — clean isolation)
@@ -117,7 +119,7 @@ python scripts/analysis/prompt_sensitivity.py --model-set open
 # API models only
 python scripts/analysis/prompt_sensitivity.py --model-set api
 
-# temp=1.0 — run separately to match Stage 3 for the combined map visual
+# temp=1.0 — run separately to match the stochastic-sensitivity conditions for the combined map visual
 python scripts/analysis/prompt_sensitivity.py --temperature 1.0
 ```
 
@@ -130,15 +132,18 @@ python scripts/analysis/visualize_prompt_sensitivity.py --model-set open
 
 # Explicit flat file
 python scripts/analysis/visualize_prompt_sensitivity.py --flat data/results/prompt_sensitivity/prompt_sensitivity_flat_open_<ts>.csv
+
+# Tone-to-tone displacement on the cultural map
+python scripts/analysis/visualize_tone_shift.py
 ```
 
 **Outputs:** `outputs/prompt_sensitivity/`
 
 ---
 
-## Stage 5 — Variance Decomposition
+## Variance Decomposition
 
-Combines Stages 3 + 4 to compute σ_seed, σ_prompt, σ_culture and NSR per (model, question).
+Combines the stochastic and prompt-sensitivity results to compute σ_seed, σ_prompt, σ_culture and NSR per (model, question).
 
 ```bash
 # NSR analysis (use temp=0 prompt file — correct for comparing noise sources)
@@ -195,10 +200,10 @@ ollama ps                           # Check server status
 | Run baseline (all models) | `python scripts/baseline/baseline_replication.py` |
 | Run baseline (open only) | `python scripts/baseline/baseline_replication.py --model-set open` |
 | Visualize baseline | `python scripts/baseline/visualize_baseline.py` |
-| Stage 3 — stochastic | `python scripts/analysis/stochastic_sensitivity.py` |
-| Stage 3 — visualize | `python scripts/analysis/visualize_stochastic.py` |
-| Stage 3 — cultural map | `python scripts/analysis/visualize_stochastic_map.py` |
-| Stage 4 — prompt sensitivity | `python scripts/analysis/prompt_sensitivity.py` |
-| Stage 4 — visualize | `python scripts/analysis/visualize_prompt_sensitivity.py` |
-| Stage 5 — variance decomposition | `python scripts/analysis/variance_decomposition.py` |
+| Stochastic sensitivity | `python scripts/analysis/stochastic_sensitivity.py` |
+| Visualize stochastic sensitivity | `python scripts/analysis/visualize_stochastic.py` |
+| Stochastic sensitivity on cultural map | `python scripts/analysis/visualize_stochastic_map.py` |
+| Prompt sensitivity | `python scripts/analysis/prompt_sensitivity.py` |
+| Visualize prompt sensitivity | `python scripts/analysis/visualize_prompt_sensitivity.py` |
+| Variance decomposition | `python scripts/analysis/variance_decomposition.py` |
 | Test Ollama setup | `python tests/test_ollama_setup.py` |

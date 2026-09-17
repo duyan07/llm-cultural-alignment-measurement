@@ -53,13 +53,8 @@ def _filter_by_model_set(paths, model_set):
 
 
 def load_all_data(flat_path=None, model_set=None):
-    """
-    Load and merge flat results.
-
-    If flat_path is given, load only that file.
-    Otherwise merge stochastic_flat_*.csv files in RESULTS_DIR.
-    Pass model_set='open'/'all' to restrict to files from that run type.
-    """
+    """Load a single flat CSV, or merge all stochastic_flat_*.csv files in
+    RESULTS_DIR, optionally restricted to one model_set."""
     if flat_path:
         paths = [Path(flat_path)]
     else:
@@ -153,7 +148,6 @@ def _plot_numeric_strip(ax, values, qid, label):
     ax.set_ylabel('response', fontsize=8)
     ax.legend(fontsize=7, loc='upper right')
 
-    # Annotate std
     ax.text(0.02, 0.02, f'std={std:.2f}', transform=ax.transAxes,
             fontsize=7, color='gray', va='bottom')
 
@@ -238,7 +232,7 @@ def plot_stability_summary(summary_df: pd.DataFrame, out_path: Path) -> None:
     Heatmap-style grid: rows = questions, columns = models.
     Cell colour = mode consistency (1.0 = fully stable, 0.0 = max variance).
     """
-    # Pivot: one row per question, one col per model (averaged over tone/variant)
+    # groupby omits tone/variant, so this averages mode_consistency across them
     pivot = summary_df.groupby(['question_id', 'model'])['mode_consistency'].mean().unstack('model')
     pivot = pivot.reindex(QUESTION_ORDER)
 
@@ -254,7 +248,6 @@ def plot_stability_summary(summary_df: pd.DataFrame, out_path: Path) -> None:
     ax.set_yticklabels([QUESTION_LABELS.get(q, q).replace('\n', ' ')
                         for q in pivot.index], fontsize=9)
 
-    # Annotate cells
     for i in range(len(pivot.index)):
         for j in range(len(pivot.columns)):
             val = pivot.values[i, j]
@@ -294,14 +287,12 @@ def main():
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     ts = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
 
-    # Figure 1: per-question distributions for each model
     for model in models:
         safe_model = model.replace('/', '_').replace(':', '_')
         out = OUTPUTS_DIR / f"distributions_{safe_model}_{args.tone}_v{args.variant}{ms_tag}_{ts}.png"
         plot_distributions(flat_df, model, args.tone, args.variant, out)
 
-    # Figure 2: stability summary heatmap (all models) — recomputed from merged flat data
-    # We recompute mode_consistency directly rather than relying on summary CSVs,
+    # Recompute mode_consistency directly rather than relying on summary CSVs,
     # which may not exist for all runs or may cover different model sets.
     from collections import Counter
 

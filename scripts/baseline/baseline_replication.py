@@ -41,7 +41,6 @@ PROPRIETARY_MODELS = {
     'claude-sonnet-4-6': 'anthropic',
 }
 
-# Paths
 BASELINE_PATH = Path("data/processed/cultural_map_coordinates.csv")
 IVS_PATH = Path("data/processed/ivs_2005-2022.csv")
 RESULTS_DIR = Path("data/results/baseline")
@@ -67,7 +66,6 @@ class BaselineReplicator:
             else self._build_model_list()
         )
 
-        # Create output directories
         RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -155,14 +153,12 @@ class BaselineReplicator:
         results = []
         total_queries = len(QUESTIONS) * len(tone_prompts)
 
-        # Query each question with each variant
         for question_id, question_info in QUESTIONS.items():
             print(f"\n  Question {question_id}: {question_info['name']}")
 
             for variant_idx in range(len(tone_prompts)):
                 print(f"    Variant {variant_idx + 1}/{len(tone_prompts)}... ", end='', flush=True)
 
-                # Format prompt with the current tone
                 prompt = format_full_prompt(
                     question_id=question_id,
                     country_name=None,
@@ -170,7 +166,6 @@ class BaselineReplicator:
                     tone=tone
                 )
 
-                # Query model
                 result = wrapper.query(
                     system_prompt=prompt['system'],
                     user_prompt=prompt['user'],
@@ -181,7 +176,6 @@ class BaselineReplicator:
                     }
                 )
 
-                # Parse response
                 raw_response = result.get('response') or ''
                 if result.get('error') and not raw_response:
                     print(f"API error: {result['error']}", end=' ')
@@ -190,7 +184,6 @@ class BaselineReplicator:
                 is_valid = parsed is not None
                 print(f"{'OK' if is_valid else 'FAIL'}")
 
-                # Log
                 self.logger.log_query(
                     model=model_name,
                     provider=provider,
@@ -207,7 +200,6 @@ class BaselineReplicator:
                     error=result.get('error')
                 )
 
-                # Store result
                 results.append({
                     'model': model_name,
                     'provider': provider,
@@ -241,7 +233,6 @@ class BaselineReplicator:
             ]
 
             if len(valid_responses) > 0:
-                # Convert each parsed value to its IVS numeric code
                 numeric_values = [
                     ResponseParser.to_ivs_numeric(v, question_info)
                     for v in valid_responses['parsed_value']
@@ -265,7 +256,6 @@ class BaselineReplicator:
             print(f"  Skipping coordinates: no valid responses for {missing_qs}")
             return np.nan, np.nan
 
-        # Project averaged responses through the baseline PCA transformation
         means = self.pca_generator.question_means_
         stds = self.pca_generator.question_stds_
 
@@ -315,7 +305,6 @@ class BaselineReplicator:
         print(f"Model set:      {self.model_set}")
         print(f"Tones to test:  {tones}\n")
 
-        # Results keyed by tone
         all_results = {tone: {'models': [], 'responses': [], 'distances': [], 'summary': []} for tone in tones}
 
         for tone in tones:

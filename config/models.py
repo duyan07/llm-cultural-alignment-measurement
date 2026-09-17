@@ -1,9 +1,4 @@
-"""
-Model Configuration
-
-Defines all LLMs to be tested in this replication study.
-Based on the model selection table from the research timeline.
-"""
+"""Defines all LLMs tested in this replication study, grouped by origin/type."""
 
 # Models organized by origin and type
 MODELS = {
@@ -129,7 +124,7 @@ MODELS = {
             'rationale': 'PNAS paper comparison model',
             'priority': 'medium'
         },
-        'claude-sonnet-4-5': {
+        'claude-sonnet-4-6': {
             'provider': 'anthropic',
             'origin': 'Anthropic (US)',
             'size': 'unknown',
@@ -149,7 +144,6 @@ MODELS = {
 }
 
 
-# Model testing parameters
 DEFAULT_PARAMS = {
     'temperature': 0.0,  # Deterministic for baseline
     'max_tokens': 256,
@@ -158,23 +152,15 @@ DEFAULT_PARAMS = {
     'presence_penalty': 0.0,
 }
 
-# For stochastic sensitivity testing (Stage 3)
+# For stochastic sensitivity testing
 STOCHASTIC_PARAMS = {
     'temperature': 1.0,
-    'seeds': list(range(10)),  # 10 different seeds
+    'seeds': list(range(10)),
 }
 
 
 def get_models_by_priority(priority='high'):
-    """
-    Get list of models filtered by priority.
-
-    Args:
-        priority: 'critical', 'high', 'medium', or 'low'
-
-    Returns:
-        List of (model_name, model_config) tuples
-    """
+    """Get (model_name, config) pairs at or above the given priority: 'critical', 'high', 'medium', or 'low'."""
     priority_order = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
     threshold = priority_order.get(priority, 0)
 
@@ -216,7 +202,6 @@ def get_model_info(model_name):
     return None
 
 
-# Quick access to recommended models for each phase
 RECOMMENDED_MODELS = {
     # Fast models for quick iteration and testing
     'testing': ['gemma2:2b', 'qwen2.5:1.5b'],

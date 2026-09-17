@@ -1,11 +1,4 @@
-"""
-Visualize Baseline Replication Results
-
-Creates publication-quality visualization showing:
-- 88-country human baseline colored by cultural zone
-- Country ISO-3 labels on every dot
-- LLM model positions with annotations
-- Tone-labeled title and tone-specific output filenames
+"""Plots the 88-country human baseline alongside queried LLM positions on the cultural map, one figure per tone.
 
 Usage:
     # Generate maps for all tones that have results (default):

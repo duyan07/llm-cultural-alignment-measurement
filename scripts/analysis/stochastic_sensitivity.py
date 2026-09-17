@@ -1,27 +1,36 @@
 """
-Stochastic Sensitivity Analysis  (Stage 3)
+Stochastic Sensitivity Analysis
 
-For each (model, question) pair, runs the same prompt 10 times with different
-random seeds, holding tone, variant, and temperature fixed. This isolates
-sampling randomness as the sole source of variance.
+For each (model, question) pair, runs the same prompt 10 times to measure
+sampling-randomness variance. Tone and variant are held fixed (standard,
+variant 0) so this isolates seed/sampling noise from prompt-wording noise
+(the latter is prompt_sensitivity.py's job).
 
-Tone and variant are intentionally fixed (standard, variant 0) so that results
-are not conflated with prompt wording sensitivity — that is measured separately
-in the Stage 4 prompt sensitivity analysis.
-
-Only Ollama (open) models are supported — seed control requires a local runtime.
+Provider handling:
+  - Ollama and OpenAI both accept a `seed` parameter — we run seeds 0–9 to
+    get 10 deterministic-given-seed samples from the temperature distribution.
+  - Anthropic (Claude) doesn't accept a seed — we run 10 independent calls at
+    temperature=1.0 instead. Each call is an i.i.d. sample from the same
+    response distribution, so the variance estimate is the same population
+    quantity. The only difference is reproducibility of individual outputs.
+    The 'seed' column for Anthropic rows is a sample index (0–9), not a
+    reproducibility key.
 
 Usage:
-    # All open models auto-detected (default)
+    # All available models (Ollama + API) auto-detected
     python scripts/analysis/stochastic_sensitivity.py
 
-    # Open models only (same as default for this script)
+    # Open Ollama models only
     python scripts/analysis/stochastic_sensitivity.py --model-set open
 
-    # Specific models (overrides --model-set)
-    python scripts/analysis/stochastic_sensitivity.py --models gemma2:2b qwen2.5:1.5b
+    # Proprietary API models only
+    python scripts/analysis/stochastic_sensitivity.py --model-set api
+
+    # Specific models (provider auto-detected from name)
+    python scripts/analysis/stochastic_sensitivity.py --models gemma2:2b gpt-4o claude-sonnet-4-6
 """
 
+import os
 import sys
 import json
 import math
@@ -29,7 +38,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 from collections import Counter
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -40,10 +49,16 @@ from src.llm_interface import LLMQueryWrapper
 from src.response_parser import ResponseParser
 from src.prompts import QUESTIONS, TONES, format_full_prompt
 
+PROPRIETARY_MODELS = {
+    'gpt-4o':            'openai',
+    'gpt-4o-mini':       'openai',
+    'claude-sonnet-4-6': 'anthropic',
+}
+
 RESULTS_DIR = Path("data/results/stochastic")
 LOGS_DIR = Path("logs/stochastic")
 
-DEFAULT_SEEDS = list(range(10))   # seeds 0-9
+DEFAULT_SEEDS = list(range(10))
 
 DEFAULT_TEMPERATURE = 1.0
 
@@ -128,26 +143,32 @@ def compute_distribution_stats(parsed_values: list, question_info: dict) -> dict
 
 class StochasticSensitivityRunner:
     """
-    Runs each prompt N times with different seeds to measure response variance.
+    Runs each prompt N times to measure response sampling variance.
 
-    Note: only Ollama models are supported — seed control requires a local
-    runtime. Proprietary APIs do not expose seed parameters, so --model-set api
-    is not applicable here.
+    For Ollama and OpenAI models, the seed parameter is passed (seeds 0–9)
+    so each call is deterministic-given-seed. For Anthropic models, the API
+    does not expose a seed parameter, so we run 10 independent calls at
+    temperature=1.0 — the variance estimate is the same population quantity,
+    only per-call reproducibility differs (see module docstring).
     """
 
     def __init__(self,
-                 models: Optional[List[str]] = None,
+                 models: Optional[List] = None,
                  seeds: List[int] = DEFAULT_SEEDS,
                  temperature: float = DEFAULT_TEMPERATURE,
                  tones: Optional[List[str]] = None,
                  variants: Optional[List[int]] = None,
                  model_set: str = 'all'):
         self.model_set = model_set
-        self.models = models if models is not None else self._build_model_list()
+        # Internally, models is a list of (name, provider) tuples.
+        if models is None:
+            self.models = self._build_model_list()
+        else:
+            self.models = self._normalize_models(models)
         self.seeds = seeds
         self.temperature = temperature
         # Fixed to one tone and variant — prompt wording is held constant so that
-        # only seed variation is measured. Cross-prompt sensitivity is Stage 4's job.
+        # only seed variation is measured. Cross-prompt sensitivity is prompt_sensitivity.py's job.
         self.tones = tones or ['standard']
         self.variants = variants if variants is not None else [0]
 
@@ -163,15 +184,38 @@ class StochasticSensitivityRunner:
         print(f"\nPlan: {len(self.models)} models × {len(self.tones)} tones "
               f"× {len(self.variants)} variants × {len(QUESTIONS)} questions "
               f"× {len(self.seeds)} seeds = {total} queries\n")
+        for name, provider in self.models:
+            seed_note = ('seedless — 10 i.i.d. samples'
+                         if provider == 'anthropic' else 'seeds 0–9')
+            print(f"  - {name}  [{provider}]  ({seed_note})")
+        print()
 
     # ── Model discovery ──────────────────────────────────────────────────────
 
-    def _build_model_list(self) -> List[str]:
-        if self.model_set == 'api':
-            print("Warning: --model-set api is not supported for stochastic "
-                  "sensitivity (seed control requires Ollama). No models loaded.")
-            return []
-        return self._discover_ollama_models()
+    def _normalize_models(self, models: List) -> List[Tuple[str, str]]:
+        """Accept list of names or (name, provider) tuples; infer provider when missing."""
+        out = []
+        for entry in models:
+            if isinstance(entry, tuple):
+                out.append(entry)
+            else:
+                provider = PROPRIETARY_MODELS.get(entry, 'ollama')
+                out.append((entry, provider))
+        return out
+
+    def _build_model_list(self) -> List[Tuple[str, str]]:
+        result: List[Tuple[str, str]] = []
+        if self.model_set in ('all', 'open'):
+            result.extend((m, 'ollama') for m in self._discover_ollama_models())
+        if self.model_set in ('all', 'api'):
+            for model, provider in PROPRIETARY_MODELS.items():
+                if provider == 'openai' and os.getenv('OPENAI_API_KEY'):
+                    result.append((model, provider))
+                elif provider == 'anthropic' and os.getenv('ANTHROPIC_API_KEY'):
+                    result.append((model, provider))
+        if not result:
+            print(f"Warning: no models found for --model-set '{self.model_set}'")
+        return result
 
     def _discover_ollama_models(self) -> List[str]:
         """Auto-detect local Ollama models."""
@@ -185,6 +229,26 @@ class StochasticSensitivityRunner:
             print(f"Could not auto-detect Ollama models: {e}")
             return []
 
+    def _make_wrapper(self, model_name: str, provider: str,
+                      seed: int) -> LLMQueryWrapper:
+        """Build a query wrapper for a given (model, provider, seed)."""
+        kwargs = dict(
+            provider=provider,
+            model_name=model_name,
+            temperature=self.temperature,
+            max_tokens=256,
+        )
+        # Ollama and OpenAI accept a seed parameter; Anthropic does not.
+        # For Anthropic the 'seed' is just a sample index recorded in our
+        # output for bookkeeping — the call itself is genuinely stochastic.
+        if provider in ('ollama', 'openai'):
+            kwargs['seed'] = seed
+        if provider == 'openai':
+            kwargs['api_key'] = os.getenv('OPENAI_API_KEY')
+        elif provider == 'anthropic':
+            kwargs['api_key'] = os.getenv('ANTHROPIC_API_KEY')
+        return LLMQueryWrapper(**kwargs)
+
     # ── Core query loop ──────────────────────────────────────────────────────
 
     def run(self) -> pd.DataFrame:
@@ -195,24 +259,24 @@ class StochasticSensitivityRunner:
         """
         all_rows = []
 
-        for model_name in self.models:
+        for model_name, provider in self.models:
             print(f"\n{'='*70}")
-            print(f"MODEL: {model_name}")
+            print(f"MODEL: {model_name}  ({provider})")
             print(f"{'='*70}")
 
             for tone in self.tones:
                 for variant_idx in self.variants:
-                    rows = self._run_model_variant(model_name, tone, variant_idx)
+                    rows = self._run_model_variant(
+                        model_name, provider, tone, variant_idx
+                    )
                     all_rows.extend(rows)
 
         df = pd.DataFrame(all_rows)
 
-        # Save flat results
         flat_path = RESULTS_DIR / f"stochastic_flat_{self.model_set}_{self.timestamp}.csv"
         df.to_csv(flat_path, index=False)
         print(f"\nSaved flat results: {flat_path}")
 
-        # Compute and save distribution summary
         summary_df = self._compute_summary(df)
         summary_path = RESULTS_DIR / f"stochastic_summary_{self.model_set}_{self.timestamp}.csv"
         summary_df.to_csv(summary_path, index=False)
@@ -222,8 +286,8 @@ class StochasticSensitivityRunner:
 
         return df
 
-    def _run_model_variant(self, model_name: str, tone: str,
-                           variant_idx: int) -> list:
+    def _run_model_variant(self, model_name: str, provider: str,
+                           tone: str, variant_idx: int) -> list:
         """Run all seeds × questions for one (model, tone, variant) combo."""
         rows = []
 
@@ -238,13 +302,7 @@ class StochasticSensitivityRunner:
             seed_responses = []
 
             for seed in self.seeds:
-                wrapper = LLMQueryWrapper(
-                    provider='ollama',
-                    model_name=model_name,
-                    temperature=self.temperature,
-                    seed=seed,
-                    max_tokens=256
-                )
+                wrapper = self._make_wrapper(model_name, provider, seed)
 
                 result = wrapper.query(
                     system_prompt=prompt['system'],
@@ -264,23 +322,23 @@ class StochasticSensitivityRunner:
 
                 row = {
                     'model': model_name,
+                    'provider': provider,
                     'tone': tone,
                     'variant': variant_idx,
                     'question_id': question_id,
                     'seed': seed,
                     'raw_response': raw,
-                    'parsed_value': json.dumps(parsed),   # JSON-safe serialisation
+                    'parsed_value': json.dumps(parsed),
                     'is_valid': is_valid,
                     'error': result.get('error'),
                 }
                 rows.append(row)
                 seed_responses.append(parsed)
 
-                # Log to JSONL
                 self._log_entry({
                     'timestamp': datetime.now().isoformat(),
                     'model': model_name,
-                    'provider': 'ollama',
+                    'provider': provider,
                     'tone': tone,
                     'variant': variant_idx,
                     'question_id': question_id,
@@ -295,7 +353,6 @@ class StochasticSensitivityRunner:
                     'error': result.get('error'),
                 })
 
-            # Quick per-question status line
             n_valid = sum(1 for v in seed_responses if v is not None)
             print(f"  {model_name} | {tone} | v{variant_idx} | {question_id}"
                   f" — {n_valid}/{len(self.seeds)} valid seeds")
@@ -320,7 +377,6 @@ class StochasticSensitivityRunner:
             model, tone, variant, question_id = keys
             question_info = QUESTIONS[question_id]
 
-            # Deserialise parsed values
             parsed_values = []
             for pv in group['parsed_value']:
                 try:
@@ -386,11 +442,15 @@ def main():
         description='Stochastic sensitivity: run each prompt with N seeds.'
     )
     parser.add_argument(
-        '--model-set', choices=['all', 'open'], default='all',
-        help='all/open=Ollama only (default: all); api not supported — seed control requires Ollama'
+        '--model-set', choices=['all', 'open', 'api'], default='all',
+        help='all (default) runs Ollama + API models; open runs Ollama only; '
+             'api runs proprietary models only. Anthropic models are queried '
+             'seedlessly (10 i.i.d. samples at temperature=1.0).'
     )
     parser.add_argument('--models', nargs='+',
-                        help='Explicit Ollama model names; overrides --model-set')
+                        help='Explicit model names; provider auto-detected '
+                             '(known proprietary models routed to OpenAI/Anthropic, '
+                             'rest to Ollama). Overrides --model-set.')
     parser.add_argument('--seeds', nargs='+', type=int,
                         default=DEFAULT_SEEDS,
                         help=f'Seeds to use (default: {DEFAULT_SEEDS})')

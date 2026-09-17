@@ -22,7 +22,6 @@ def analyze_y003_structure(df):
     print("Y003 STRUCTURE ANALYSIS")
     print("="*70)
 
-    # Find all Y003-related columns
     y003_cols = [col for col in df.columns if 'Y003' in col.upper()]
 
     print(f"\nFound {len(y003_cols)} Y003-related columns:")
@@ -36,7 +35,6 @@ def analyze_y003_structure(df):
 
         print(f"\n\nY003 data type: {df['Y003'].dtype}")
 
-        # Check for negative values (missing codes)
         if df['Y003'].dtype in ['int64', 'float64']:
             neg_mask = df['Y003'] < 0
             print(f"\nNegative values (missing codes): {neg_mask.sum():,} ({neg_mask.sum()/len(df)*100:.1f}%)")
@@ -52,7 +50,6 @@ def analyze_by_wave(df):
     print("Y003 AVAILABILITY BY WAVE")
     print("="*70)
 
-    # WVS waves
     if 's002' in df.columns:
         print("\nWVS Waves (s002):")
         for wave in sorted(df['s002'].dropna().unique()):
@@ -61,7 +58,6 @@ def analyze_by_wave(df):
             y003_valid = ((wave_df['Y003'] >= 0) & wave_df['Y003'].notna()).sum()
             print(f"  Wave {int(wave)}: {len(wave_df):,} total, {y003_valid:,} valid ({y003_valid/len(wave_df)*100:.1f}%)")
 
-    # EVS waves
     if 'S002EVS' in df.columns:
         print("\nEVS Waves (S002EVS):")
         for wave in sorted(df['S002EVS'].dropna().unique()):
@@ -76,23 +72,19 @@ def compare_with_without_y003(df):
     print("IMPACT OF Y003 REQUIREMENT")
     print("="*70)
 
-    # All 10 questions
     all_questions = ['A008', 'A165', 'E018', 'E025', 'F063', 'F118', 'F120', 'G006', 'Y002', 'Y003']
 
     # 9 questions without Y003
     nine_questions = ['A008', 'A165', 'E018', 'E025', 'F063', 'F118', 'F120', 'G006', 'Y002']
 
-    # Clean data: remove negative values
     df_clean = df.copy()
     for q in all_questions:
         if q in df_clean.columns:
             df_clean.loc[df_clean[q] < 0, q] = np.nan
 
-    # Complete cases for all 10
     complete_10 = df_clean.dropna(subset=all_questions)
     countries_10 = (complete_10['S024'] // 10).nunique()
 
-    # Complete cases for 9 (without Y003)
     complete_9 = df_clean.dropna(subset=nine_questions)
     countries_9 = (complete_9['S024'] // 10).nunique()
 
@@ -108,14 +100,13 @@ def compare_with_without_y003(df):
     print(f"  Lost responses: {len(complete_9) - len(complete_10):,} ({(len(complete_9) - len(complete_10))/len(complete_9)*100:.1f}%)")
     print(f"  Lost countries: {countries_9 - countries_10}")
 
-    # Which countries are lost?
     countries_in_9 = set((complete_9['S024'] // 10).unique())
     countries_in_10 = set((complete_10['S024'] // 10).unique())
     lost_countries = sorted(countries_in_9 - countries_in_10)
 
     if lost_countries:
         print(f"\nCountries lost due to Y003 requirement ({len(lost_countries)}):")
-        for country in lost_countries[:20]:  # Show first 20
+        for country in lost_countries[:20]:
             count_9 = len(complete_9[complete_9['S024'] // 10 == country])
             print(f"  Country {int(country)}: {count_9:,} valid responses on 9 questions")
         if len(lost_countries) > 20:
@@ -133,7 +124,6 @@ def main():
 
     df = load_data(ivs_path)
 
-    # Run analyses
     analyze_y003_structure(df)
     analyze_by_wave(df)
     compare_with_without_y003(df)

@@ -1,25 +1,14 @@
-"""
-Generate Baseline Cultural Map
-
-This script:
-1. Loads the merged IVS dataset
-2. Applies PCA to generate cultural map coordinates
-3. Saves coordinates and creates visualization
-
-This establishes the "ground truth" baseline that we'll compare LLM outputs against.
-"""
+"""Builds the human "ground truth" cultural map from IVS data, which LLM outputs are later compared against."""
 
 from pathlib import Path
 import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.cultural_map import CulturalMapGenerator
 
-# File paths
 IVS_PATH = Path("data/processed/ivs_2005-2022.csv")
 COORDS_OUTPUT = Path("data/processed/cultural_map_coordinates.csv")
 VIZ_OUTPUT = Path("outputs/baseline/cultural_map_baseline.png")
@@ -41,18 +30,11 @@ def load_ivs_data():
 
 
 def visualize_cultural_map(coords_df, output_path):
-    """
-    Create a visualization of the cultural map.
-
-    Args:
-        coords_df: DataFrame with country coordinates
-        output_path: Where to save the plot
-    """
+    """Create a visualization of the cultural map."""
     print("\nCreating cultural map visualization...")
 
     fig, ax = plt.subplots(figsize=(14, 10))
 
-    # Plot points
     scatter = ax.scatter(
         coords_df['survival_selfexpression'],
         coords_df['traditional_secular'],
@@ -63,7 +45,6 @@ def visualize_cultural_map(coords_df, output_path):
         linewidth=0.5
     )
 
-    # Add country labels (just country codes for now)
     for _, row in coords_df.iterrows():
         ax.annotate(
             f"{int(row['country_code'])}",
@@ -73,16 +54,13 @@ def visualize_cultural_map(coords_df, output_path):
             ha='center'
         )
 
-    # Labels and title
     ax.set_xlabel('Survival ← → Self-Expression Values', fontsize=12, fontweight='bold')
     ax.set_ylabel('Traditional ← → Secular Values', fontsize=12, fontweight='bold')
     ax.set_title('Inglehart-Welzel Cultural Map (Baseline from IVS Data)',
                  fontsize=14, fontweight='bold', pad=20)
 
-    # Add gridlines
     ax.grid(True, alpha=0.3, linestyle='--')
 
-    # Add center lines
     ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.8, alpha=0.5)
     ax.axvline(x=0, color='gray', linestyle='-', linewidth=0.8, alpha=0.5)
 
@@ -90,7 +68,6 @@ def visualize_cultural_map(coords_df, output_path):
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Visualization saved to: {output_path}")
 
-    # Also show some stats
     print("\nCultural Map Statistics:")
     print(f"  X-axis (Survival-SelfExpression) range: [{coords_df['survival_selfexpression'].min():.2f}, {coords_df['survival_selfexpression'].max():.2f}]")
     print(f"  Y-axis (Traditional-Secular) range: [{coords_df['traditional_secular'].min():.2f}, {coords_df['traditional_secular'].max():.2f}]")
@@ -112,7 +89,6 @@ def print_summary_stats(coords_df):
     for _, row in top_10.iterrows():
         print(f"  Country {int(row['country_code'])}: {int(row['n_respondents']):,} respondents")
 
-    # Quadrant analysis
     print("\nQuadrant distribution:")
     q1 = len(coords_df[(coords_df['survival_selfexpression'] > 0) & (coords_df['traditional_secular'] > 0)])
     q2 = len(coords_df[(coords_df['survival_selfexpression'] < 0) & (coords_df['traditional_secular'] > 0)])
@@ -130,22 +106,17 @@ def main():
     print("GENERATING BASELINE CULTURAL MAP FROM IVS DATA")
     print("="*60)
 
-    # Load data
     ivs_df = load_ivs_data()
 
-    # Generate cultural map coordinates
     generator = CulturalMapGenerator(ivs_df)
     coords_df = generator.fit()
 
-    # Save coordinates
     COORDS_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     VIZ_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     generator.save_coordinates(COORDS_OUTPUT)
 
-    # Print summary
     print_summary_stats(coords_df)
 
-    # Create visualization
     visualize_cultural_map(coords_df, VIZ_OUTPUT)
 
     print("\n" + "="*60)

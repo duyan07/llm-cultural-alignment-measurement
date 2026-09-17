@@ -236,16 +236,10 @@ TONES = {
 
 def get_cultural_prompt(country_name=None, variant=0, tone='standard'):
     """
-    Generate the cultural prompting system prompt.
-
-    Args:
-        country_name: Country/territory name (e.g., "Thailand", "United States")
-                     If None, returns generic prompt
-        variant: System prompt variant (0-9)
-        tone: Prompt tone — 'standard', 'friendly', or 'combative'
-
-    Returns:
-        System prompt string
+    Generate the cultural prompting system prompt for one of the 10 variants
+    (0-9) and one of the 'standard' / 'friendly' / 'combative' tones.
+    Returns the generic prompt if country_name is None, otherwise substitutes
+    it into the subject noun (e.g. "human being born in Thailand and living in Thailand").
     """
     prompts = TONES.get(tone, SYSTEM_PROMPTS)
 
@@ -280,18 +274,7 @@ def get_cultural_prompt(country_name=None, variant=0, tone='standard'):
 
 
 def format_full_prompt(question_id, country_name=None, variant=0, tone='standard'):
-    """
-    Format complete prompt for LLM including system and user messages.
-
-    Args:
-        question_id: IVS question ID (e.g., 'A008', 'F118')
-        country_name: Country for cultural prompting (None for generic)
-        variant: System prompt variant (0-9)
-        tone: Prompt tone — 'standard', 'friendly', or 'combative'
-
-    Returns:
-        dict with 'system' and 'user' keys containing prompt text
-    """
+    """Build the {'system', 'user', 'metadata'} prompt dict for a given question_id, variant (0-9), and tone."""
     if question_id not in QUESTIONS:
         raise ValueError(f"Unknown question ID: {question_id}")
 

@@ -1,10 +1,10 @@
 """
-Variance Decomposition  (Stage 5)
+Variance Decomposition
 
 Separates the three sources of disagreement in LLM cultural survey responses:
 
-  σ_seed    — sampling randomness (Stage 3 stochastic: same prompt, 10 different seeds)
-  σ_prompt  — wording sensitivity (Stage 4 prompt sensitivity: fixed seed, 30 prompt variants)
+  σ_seed    — sampling randomness (stochastic sensitivity: same prompt, 10 different seeds)
+  σ_prompt  — wording sensitivity (prompt sensitivity: fixed seed, 30 prompt variants)
   σ_culture — between-model spread per question (the signal we want to detect)
 
 Key question: for each (model, question), does instrument noise (σ_seed + σ_prompt)
@@ -90,7 +90,7 @@ def load_stochastic(model_set=None) -> pd.DataFrame:
         rows.append({
             'model':      model,
             'question_id': qid,
-            'sigma_seed': np.std(nums, ddof=1) if len(nums) > 1 else 0.0,
+            'sigma_seed': np.std(nums, ddof=1) if len(nums) > 1 else np.nan,
             'mean_seed':  np.mean(nums) if nums else np.nan,
             'n_seed':     len(nums),
         })
@@ -117,7 +117,7 @@ def load_prompt_sensitivity(model_set=None) -> pd.DataFrame:
         rows.append({
             'model':        model,
             'question_id':  qid,
-            'sigma_prompt': np.std(nums, ddof=1) if len(nums) > 1 else 0.0,
+            'sigma_prompt': np.std(nums, ddof=1) if len(nums) > 1 else np.nan,
             'mean_prompt':  np.mean(nums) if nums else np.nan,
             'n_prompt':     len(nums),
         })
@@ -217,11 +217,9 @@ def plot_variance_bars(decomp: pd.DataFrame, out_path: Path) -> None:
         ax.set_ylabel('σ (IVS numeric)', fontsize=8)
         ax.grid(True, alpha=0.2, axis='y')
 
-    # Hide unused panels
     for ax in axes[n_models:]:
         ax.set_visible(False)
 
-    # Shared legend
     seed_patch   = mpatches.Patch(color='#4878cf', label='σ_seed — sampling noise (stochastic)')
     prompt_patch = mpatches.Patch(color='#e87e3a', label='σ_prompt — wording sensitivity (prompt)')
     culture_line = plt.Line2D([0], [0], color='#2ecc71', linewidth=2.2,
@@ -272,7 +270,6 @@ def plot_noise_signal_heatmap(decomp: pd.DataFrame, out_path: Path) -> None:
         ax.imshow(nan_overlay, aspect='auto',
                   cmap=LinearSegmentedColormap.from_list('grey', ['#cccccc', '#cccccc']),
                   vmin=0, vmax=1)
-        # Add hatching via patches
         for i in range(nan_mask.shape[0]):
             for j in range(nan_mask.shape[1]):
                 if nan_mask[i, j]:
@@ -398,7 +395,6 @@ def plot_combined_map(baseline_df, pca_gen, out_path: Path,
         Pass the temperature=1.0 run here so both panels are on the same
         footing as the stochastic run (also temperature=1.0). If None, merges all files.
     """
-    # Load flat data
     stoch_paths = sorted(STOCHASTIC_DIR.glob("stochastic_flat_*.csv"))
 
     stoch_flat = pd.concat([pd.read_csv(p) for p in stoch_paths], ignore_index=True)
@@ -416,11 +412,9 @@ def plot_combined_map(baseline_df, pca_gen, out_path: Path,
         subset=['model','tone','variant','question_id'], keep='last')
     prom_flat['parsed'] = prom_flat['parsed_value'].apply(parse_val)
 
-    # Annotate title with temperature if available
     prompt_temp = prom_flat['temperature'].iloc[0] if 'temperature' in prom_flat.columns \
                   else 'unknown'
 
-    # Compute coordinates
     print("  Computing seed coordinates (stochastic)...")
     stoch_coords = flat_to_coords(stoch_flat, ['model', 'seed'], pca_gen)
     print("  Computing variant coordinates (prompt sensitivity)...")
@@ -433,8 +427,8 @@ def plot_combined_map(baseline_df, pca_gen, out_path: Path,
 
     fig, axes = plt.subplots(1, 2, figsize=(24, 11))
     titles = [
-        'Stage 3 — Seed Variance\n(10 seeds × fixed prompt)',
-        'Stage 4 — Prompt Variance\n(30 prompt variants × fixed seed)',
+        'Seed Variance\n(10 seeds × fixed prompt)',
+        'Prompt Variance\n(30 prompt variants × fixed seed)',
     ]
     coords_list = [stoch_coords, prom_coords]
 
@@ -521,7 +515,6 @@ def plot_combined_map(baseline_df, pca_gen, out_path: Path,
         ax.axvline(x=0, color='gray', linestyle='--', linewidth=0.5, alpha=0.35)
         ax.grid(True, alpha=0.15)
 
-    # Legends on left panel only
     leg_zones = axes[0].legend(handles=zone_handles, title='Cultural Zone',
                                loc='upper left', fontsize=6.5,
                                title_fontsize=7.5, framealpha=0.9)
@@ -563,7 +556,6 @@ def print_report(decomp: pd.DataFrame) -> None:
     print("VARIANCE DECOMPOSITION REPORT")
     print("=" * 65)
 
-    # Per-question summary
     print("\n  By question (averaged across models):")
     print(f"  {'Question':<14} {'σ_seed':>8} {'σ_prompt':>9} "
           f"{'σ_culture':>10} {'NSR':>6}")
@@ -576,7 +568,6 @@ def print_report(decomp: pd.DataFrame) -> None:
               f"{qdf['sigma_culture'].mean():>10.3f} "
               f"{qdf['noise_to_signal'].mean():>6.2f}")
 
-    # Failure regimes: NSR > 1.0
     failures = decomp[decomp['noise_to_signal'] > 1.0][
         ['model', 'question_id', 'sigma_seed', 'sigma_prompt',
          'sigma_culture', 'noise_to_signal']
@@ -592,11 +583,11 @@ def print_report(decomp: pd.DataFrame) -> None:
                   f"NSR={r['noise_to_signal']:.2f}  "
                   f"(dominant: {dominant})")
 
-    # Best behaved models — skip models with NaN NSR (API models without σ_seed)
     print("\n  Average NSR by model (lower = more reliable):")
     avg_nsr = decomp.groupby('model')['noise_to_signal'].mean().sort_values()
     for model, nsr in avg_nsr.items():
         if pd.isna(nsr):
+            # NaN ⇒ σ_seed wasn't measured for this model (API, no seed param)
             print(f"    {model_label(model):<22s}  n/a (σ_seed not measured — API model)")
             continue
         bar = '█' * int(nsr * 5)
@@ -617,10 +608,10 @@ def main():
                              '(e.g. the temperature=1.0 run). Overrides --model-set for prompt files.')
     args = parser.parse_args()
 
-    print("Loading stochastic results (Stage 3)...")
+    print("Loading stochastic sensitivity results...")
     stoch = load_stochastic(model_set=args.model_set)
 
-    print("Loading prompt sensitivity results (Stage 4)...")
+    print("Loading prompt sensitivity results...")
     prompt = load_prompt_sensitivity(model_set=None if args.prompt_flat else args.model_set)
 
     print("Computing between-model cultural signal...")

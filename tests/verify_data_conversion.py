@@ -26,15 +26,7 @@ SEARCH_PATTERNS = {
 }
 
 def load_dataset(name):
-    """
-    Load both data and labels for a dataset.
-
-    Args:
-        name: Dataset name (e.g., "WVS", "EVS")
-
-    Returns:
-        Dictionary with "data" and "labels" DataFrames
-    """
+    """Load both data and labels for a dataset."""
     paths = DATASETS[name]
     return {
         "data": pd.read_csv(paths["data"], low_memory=False),
@@ -57,16 +49,7 @@ def print_basic_info(name, dataset):
     print(f"First few columns: {list(df.columns[:10])}\n")
 
 def find_variables(df, patterns):
-    """
-    Find variables matching search patterns (case-insensitive).
-
-    Args:
-        df: DataFrame to search
-        patterns: List of string patterns to match
-
-    Returns:
-        List of matching column names
-    """
+    """Find variables matching search patterns (case-insensitive)."""
     matches = []
     for col in df.columns:
         if any(pattern in col.lower() for pattern in patterns):

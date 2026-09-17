@@ -1,12 +1,8 @@
 """
-Week 2 Validation Script
+Week 2 validation script.
 
-Checks that all Week 2 deliverables are complete:
-1. IVS data is merged and ready
-2. 10 questions are extractable
-3. Prompts are formatted correctly
-4. Cultural map can be generated
-5. Model configuration is defined
+Checks that the merged IVS data, prompt configuration, model config, and
+cultural map generator are all in place before starting Week 3.
 """
 
 from pathlib import Path
@@ -35,7 +31,6 @@ def check_ivs_data():
 
     print(f"PASS: IVS data file exists: {ivs_path}")
 
-    # Load and check columns
     df = pd.read_csv(ivs_path, low_memory=False, nrows=100)
 
     required_cols = ['S007_01', 'S024', 'S001', 'S017']  # ID, country, survey source, weight
@@ -81,7 +76,6 @@ def check_prompts():
 
     print("PASS: All questions have required fields")
 
-    # Check tone system prompts
     expected_tones = ['standard', 'friendly', 'combative']
     missing_tones = [t for t in expected_tones if t not in TONES]
     if missing_tones:
@@ -95,7 +89,6 @@ def check_prompts():
 
     print(f"PASS: All 3 tones defined, each with 10 prompt variants")
 
-    # Test prompt formatting
     try:
         test_prompt = format_full_prompt('A008', country_name=None, variant=0)
         if 'system' not in test_prompt or 'user' not in test_prompt:
@@ -106,7 +99,6 @@ def check_prompts():
         print(f"FAIL: Error formatting prompt: {e}")
         return False
 
-    # Test cultural prompting
     try:
         cultural_prompt = format_full_prompt('A008', country_name='Thailand', variant=0)
         if 'Thailand' not in cultural_prompt['system']:
@@ -131,7 +123,7 @@ def check_model_config():
 
     ollama_models = get_ollama_models()
     print(f"PASS: Ollama models: {len(ollama_models)}")
-    for model in ollama_models[:5]:  # Show first 5
+    for model in ollama_models[:5]:
         print(f"    - {model}")
     if len(ollama_models) > 5:
         print(f"    ... and {len(ollama_models) - 5} more")
@@ -156,7 +148,6 @@ def check_cultural_map_generator():
         from src.cultural_map import CulturalMapGenerator
         print("PASS: CulturalMapGenerator class imported successfully")
 
-        # Check key methods exist
         required_methods = ['fit', 'get_country_coordinates', 'save_coordinates']
         for method in required_methods:
             if not hasattr(CulturalMapGenerator, method):
@@ -219,7 +210,6 @@ def main():
             print(f"\nERROR in {name}: {e}")
             results.append((name, False))
 
-    # Summary
     print("\n" + "="*70)
     print("VALIDATION SUMMARY")
     print("="*70)

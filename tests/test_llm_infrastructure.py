@@ -25,7 +25,6 @@ def test_ollama():
     try:
         import ollama
 
-        # List available models
         models_response = ollama.list()
         models = [m['model'] for m in models_response.get('models', [])]
 
@@ -42,7 +41,6 @@ def test_ollama():
         if len(models) > 5:
             print(f"    ... and {len(models) - 5} more")
 
-        # Test query with first available model
         test_model = models[0]
         print(f"\nTesting query with {test_model}...")
 
@@ -86,7 +84,6 @@ def test_openai():
 
         print("PASS: API key found")
 
-        # Test query
         print("Testing query with gpt-3.5-turbo...")
         wrapper = LLMQueryWrapper('openai', 'gpt-3.5-turbo', api_key=api_key, temperature=0.0)
         result = wrapper.query(
@@ -116,7 +113,6 @@ def test_response_parser():
     print("TESTING RESPONSE PARSER")
     print("="*70)
 
-    # Test cases for different response types
     test_cases = [
         ("3", 'numeric', (1, 4), 3.0),
         ("I would say 7 out of 10", 'numeric', (1, 10), 7.0),
@@ -157,7 +153,6 @@ def test_ivs_question():
     print(f"System: {prompt['system'][:60]}...")
     print(f"User: {prompt['user'][:80]}...")
 
-    # Test with Ollama if available
     try:
         import ollama
         models = ollama.list()
@@ -171,7 +166,6 @@ def test_ivs_question():
             if result.get('response'):
                 print(f"\nRaw response: '{result['response']}'")
 
-                # Parse response
                 parsed = ResponseParser.parse_by_type(result['response'], question_info)
                 print(f"Parsed value: {parsed}")
                 print(f"Valid: {parsed is not None}")
@@ -190,10 +184,8 @@ def test_logging():
     print("TESTING LOGGING SYSTEM")
     print("="*70)
 
-    # Create test logger
     logger = QueryLogger(log_dir=Path("logs/test"))
 
-    # Log a test entry
     logger.log_query(
         model='test-model',
         provider='test',
@@ -205,7 +197,6 @@ def test_logging():
         metadata={'question_id': 'A008', 'country': None}
     )
 
-    # Check stats
     stats = logger.get_stats()
 
     if stats['total_queries'] > 0:
@@ -238,7 +229,6 @@ def main():
             print(f"\nERROR: {name} test crashed: {e}")
             results[name] = False
 
-    # Summary
     print("\n" + "="*70)
     print("TEST SUMMARY")
     print("="*70)
@@ -261,7 +251,7 @@ def main():
             print("  - Local models via Ollama")
         if api_passed:
             print("  - OpenAI API models")
-        print("\nNext: Run baseline replication (Stage 2)")
+        print("\nNext: Run baseline replication")
     elif critical_passed:
         print("CORE SYSTEMS READY")
         print("\nNeed at least one LLM provider:")

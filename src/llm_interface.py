@@ -1,17 +1,5 @@
 """
-LLM Query Wrapper
-
-Provides a unified interface for querying different LLM providers:
-- Ollama (local models)
-- OpenAI (GPT-4, GPT-3.5, etc.)
-- Anthropic (Claude)
-- Google (Gemini)
-
-Handles:
-- Prompt formatting
-- Temperature/seed control
-- Error handling and retries
-- Response extraction
+Unified query interface for Ollama, OpenAI, and Anthropic chat models.
 """
 
 import os
@@ -23,7 +11,7 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from datetime import datetime
 
-# Import libraries (will be optional based on what's available)
+# Each provider's SDK is optional; only the ones installed get enabled.
 try:
     import ollama
     OLLAMA_AVAILABLE = True
@@ -44,33 +32,19 @@ except ImportError:
 
 
 class LLMQueryWrapper:
-    """
-    Unified interface for querying different LLM providers.
-    """
+    """Dispatches queries to the configured provider ('ollama', 'openai', or 'anthropic')."""
 
     def __init__(self, provider: str, model_name: str,
                  api_key: Optional[str] = None,
                  temperature: float = 0.0,
                  max_tokens: int = 256,
                  seed: Optional[int] = None):
-        """
-        Initialize the query wrapper.
-
-        Args:
-            provider: 'ollama', 'openai', 'anthropic', or 'google'
-            model_name: Specific model identifier
-            api_key: API key (not needed for Ollama)
-            temperature: Sampling temperature (0.0 = deterministic)
-            max_tokens: Maximum tokens in response
-            seed: Random seed for reproducibility
-        """
         self.provider = provider.lower()
         self.model_name = model_name
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.seed = seed
 
-        # Initialize provider-specific client
         if self.provider == 'ollama':
             if not OLLAMA_AVAILABLE:
                 raise ImportError("ollama package not installed. Run: pip install ollama")
@@ -100,18 +74,8 @@ class LLMQueryWrapper:
     def query(self, system_prompt: str, user_prompt: str,
               metadata: Optional[Dict] = None) -> Dict[str, Any]:
         """
-        Query the LLM with system and user prompts.
-
-        Args:
-            system_prompt: System message (role/context)
-            user_prompt: User message (actual question)
-            metadata: Additional metadata to log
-
-        Returns:
-            Dictionary with:
-                - response: Model's text response
-                - metadata: Query metadata (model, timestamp, etc.)
-                - raw: Raw response object (for debugging)
+        Query the LLM, returning a dict with 'response', 'metadata', and 'raw'
+        (the raw provider response object, for debugging) — or 'error' set on failure.
         """
         start_time = time.time()
 
@@ -127,7 +91,6 @@ class LLMQueryWrapper:
 
             elapsed_time = time.time() - start_time
 
-            # Add metadata
             result['metadata'] = {
                 'provider': self.provider,
                 'model': self.model_name,
@@ -188,7 +151,6 @@ class LLMQueryWrapper:
             {"role": "user", "content": user_prompt}
         ]
 
-        # Build parameters
         params = {
             'model': self.model_name,
             'messages': messages,
@@ -199,7 +161,6 @@ class LLMQueryWrapper:
         if self.seed is not None:
             params['seed'] = self.seed
 
-        # Query model
         response = self.client.chat.completions.create(**params)
 
         return {
@@ -226,16 +187,7 @@ class LLMQueryWrapper:
 
     def batch_query(self, prompts: List[Dict[str, str]],
                     metadata: Optional[List[Dict]] = None) -> List[Dict]:
-        """
-        Query multiple prompts in sequence.
-
-        Args:
-            prompts: List of dicts with 'system' and 'user' keys
-            metadata: Optional list of metadata dicts (same length as prompts)
-
-        Returns:
-            List of response dictionaries
-        """
+        """Query a list of {'system', 'user'} prompt dicts in sequence."""
         results = []
 
         for i, prompt in enumerate(prompts):

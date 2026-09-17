@@ -8,15 +8,7 @@ import os
 
 
 def load_csv_file(file_path):
-    """
-    Load CSV file and print basic statistics.
-
-    Args:
-        file_path: Path to CSV file
-
-    Returns:
-        DataFrame with loaded data
-    """
+    """Load CSV file and print basic statistics."""
     print(f"Loading CSV file from: {file_path}")
     df = pd.read_csv(file_path, low_memory=False)
 
@@ -28,15 +20,7 @@ def load_csv_file(file_path):
     return df
 
 def load_labels(labels_path):
-    """
-    Load variable labels from CSV file into a dictionary.
-
-    Args:
-        labels_path: Path to labels CSV file
-
-    Returns:
-        Dictionary mapping variable names to labels
-    """
+    """Load variable labels from CSV file into a dictionary."""
     if os.path.exists(labels_path):
         labels_df = pd.read_csv(labels_path)
         return dict(zip(labels_df['variable'], labels_df['label']))

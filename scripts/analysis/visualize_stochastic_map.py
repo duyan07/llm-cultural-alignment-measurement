@@ -194,8 +194,8 @@ def plot_stochastic_map(coords_df: pd.DataFrame,
         ax.scatter(
             zone_data['survival_selfexpression'],
             zone_data['traditional_secular'],
-            c=color, s=55, alpha=0.65,
-            edgecolors='white', linewidth=0.3, zorder=2,
+            c=color, s=80, alpha=0.85,
+            edgecolors='white', linewidth=0.4, zorder=2,
         )
         zone_handles.append(mpatches.Patch(color=color, label=zone))
 
@@ -205,13 +205,20 @@ def plot_stochastic_map(coords_df: pd.DataFrame,
             row['iso3'],
             xy=(row['survival_selfexpression'], row['traditional_secular']),
             xytext=(3, 3), textcoords='offset points',
-            fontsize=6, color='#444444', zorder=3,
+            fontsize=6.5, color='#444444', zorder=3,
         )
 
     # ── Per-model seed clouds + centroids ──
+    # Crop tightly around the dense cluster (matching the y=2.6 off-scale
+    # cutoff used in the baseline map, Figure 1) and push extreme outliers
+    # to a numbered top-edge callout instead of stretching the axes to fit
+    # them — this is what was making the in-range models look sparse/tiny.
+    Y_CROP = 2.6
+    Y_MIN = -2.7
+
     models = coords_df['model'].unique()
-    model_handles = []
     has_imputed_any = False
+    offscale_entries = []
 
     for idx, model in enumerate(models):
         color = MODEL_COLORS[idx % len(MODEL_COLORS)]
@@ -227,67 +234,63 @@ def plot_stochastic_map(coords_df: pd.DataFrame,
         if not partial_mdf.empty:
             has_imputed_any = True
 
-        # Filled markers for fully-valid points
+        xs = mdf['survival_selfexpression'].values
+        ys = mdf['traditional_secular'].values
+        cx, cy = xs.mean(), ys.mean()
+
+        if cy > Y_CROP:
+            # Off-scale: skip the cloud, queue for a top-edge callout below.
+            offscale_entries.append((label, cx, cy, color, len(mdf)))
+            continue
+
+        # Filled markers for fully-valid points — kept smaller than the
+        # country dots and the centroid star, so the visual hierarchy reads
+        # background (countries) < noise (seed cloud) < signal (centroid).
         if not full_mdf.empty:
             ax.scatter(full_mdf['survival_selfexpression'],
                        full_mdf['traditional_secular'],
-                       c=color, s=60, alpha=0.45,
-                       edgecolors=color, linewidth=0.5, zorder=6)
+                       c=color, s=60, alpha=0.55,
+                       edgecolors=color, linewidth=0.6, zorder=6)
         # Hollow markers for partially-imputed points
         if not partial_mdf.empty:
             ax.scatter(partial_mdf['survival_selfexpression'],
                        partial_mdf['traditional_secular'],
                        facecolors='none', edgecolors=color,
-                       s=60, alpha=0.7, linewidth=1.2, zorder=6)
+                       s=60, alpha=0.85, linewidth=1.2, zorder=6)
 
-        xs = mdf['survival_selfexpression'].values
-        ys = mdf['traditional_secular'].values
-        cx, cy = xs.mean(), ys.mean()
-
-        # Spokes from centroid
-        for sx, sy in zip(xs, ys):
-            ax.plot([cx, sx], [cy, sy],
-                    color=color, alpha=0.2, linewidth=0.8, zorder=5)
-
-        # Centroid star — solid if all points fully valid, hollow otherwise
+        # Centroid star — solid if all points fully valid, hollow otherwise.
+        # Sized (and outlined) to match Figure 1's stars, a bit larger even,
+        # since it has to read clearly through the surrounding seed cloud.
         all_valid = len(full_mdf) == len(mdf)
         if all_valid:
-            ax.scatter(cx, cy, c=color, s=380, marker='*',
-                       edgecolors='black', linewidth=1.2, zorder=10)
+            ax.scatter(cx, cy, c=color, s=480, marker='*',
+                       edgecolors='black', linewidth=1.6, zorder=10)
             label_text = label
         else:
-            ax.scatter(cx, cy, facecolors='white', s=380, marker='*',
-                       edgecolors=color, linewidth=2.0, zorder=10)
+            ax.scatter(cx, cy, facecolors='white', s=480, marker='*',
+                       edgecolors=color, linewidth=2.5, zorder=10)
             label_text = f"{label}  ({len(full_mdf)}/{len(mdf)})"
 
         ax.annotate(
             label_text,
             xy=(cx, cy), xytext=(10, 7),
             textcoords='offset points',
-            fontsize=8.5, fontweight='bold',
-            bbox=dict(boxstyle='round,pad=0.25', facecolor=color,
-                      alpha=0.80, edgecolor='black', linewidth=0.7),
+            fontsize=10, fontweight='bold',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor=color,
+                      alpha=0.85, edgecolor='black', linewidth=0.8),
             zorder=11,
         )
 
-        # σ from fully-valid points only; omit if too few
-        if len(full_mdf) >= 2:
-            std_x = full_mdf['survival_selfexpression'].std()
-            std_y = full_mdf['traditional_secular'].std()
-            ax.annotate(
-                f"σ=({std_x:.2f}, {std_y:.2f})",
-                xy=(cx, cy), xytext=(10, -8),
-                textcoords='offset points',
-                fontsize=6.5, color=color, zorder=11,
-            )
-
-        model_handles.append(
-            plt.Line2D([0], [0], marker='*', color='w',
-                       markerfacecolor=color, markeredgecolor='black',
-                       markersize=12, label=label)
-        )
-
     # ── Axes & labels ──
+    # Reserve a quiet buffer band above the crop line for off-scale markers,
+    # so they don't collide with the (multi-line) title above the axes.
+    y_top = Y_CROP + 0.55 if offscale_entries else Y_CROP
+    ax.set_ylim(Y_MIN, y_top)
+    # Crop the empty left third (no model data below x=-0.5; Llama3.1's
+    # cloud is the leftmost real point at x=-0.27). Right side stays
+    # auto-scaled since GPT-4o-mini/AceGPT-7B genuinely reach out to x~6.6.
+    ax.set_xlim(left=-0.5)
+
     ax.set_xlabel('Survival  ←                    →  Self-Expression Values',
                   fontsize=12, fontweight='bold', labelpad=8)
     ax.set_ylabel('Traditional  ←               →  Secular Values',
@@ -295,7 +298,7 @@ def plot_stochastic_map(coords_df: pd.DataFrame,
     impute_subtitle = (
         '\n● filled point = all 10 questions valid    ○ hollow point = ≥1 question imputed'
         ' (slot contributes 0 to the score)    ★ hollow centroid + label "(n_full/N)" '
-        'when not all points fully valid    σ from fully-valid subset only'
+        'when not all points fully valid'
         if has_imputed_any else ''
     )
 
@@ -303,33 +306,65 @@ def plot_stochastic_map(coords_df: pd.DataFrame,
         f'Stochastic Sampling Uncertainty on the Cultural Map\n'
         f'({n_seeds} seeds per model, temperature=1.0 — seed cloud shows sampling noise)'
         f'{impute_subtitle}',
-        fontsize=13, fontweight='bold', pad=14,
+        fontsize=14, fontweight='bold', pad=14,
     )
 
     ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.6, alpha=0.35)
     ax.axvline(x=0, color='gray', linestyle='--', linewidth=0.6, alpha=0.35)
 
     x_min, x_max = ax.get_xlim()
-    y_min, y_max = ax.get_ylim()
     pad = 0.15
-    ax.text(x_max - pad, y_max - pad, 'Self-Expression\n+ Secular',
+    # Anchor the top two quadrant labels to the real crop line (not the
+    # off-scale buffer band above it), so they sit at the top of the actual
+    # data region rather than floating in the empty reserved space.
+    top_ref = Y_CROP
+    bottom_ref = Y_MIN
+    ax.text(x_max - pad, top_ref - pad, 'Self-Expression\n+ Secular',
             ha='right', va='top', fontsize=8.5, color='gray', alpha=0.55, style='italic')
-    ax.text(x_min + pad, y_max - pad, 'Survival\n+ Secular',
+    ax.text(x_min + pad, top_ref - pad, 'Survival\n+ Secular',
             ha='left',  va='top', fontsize=8.5, color='gray', alpha=0.55, style='italic')
-    ax.text(x_min + pad, y_min + pad, 'Survival\n+ Traditional',
+    ax.text(x_min + pad, bottom_ref + pad, 'Survival\n+ Traditional',
             ha='left',  va='bottom', fontsize=8.5, color='gray', alpha=0.55, style='italic')
-    ax.text(x_max - pad, y_min + pad, 'Self-Expression\n+ Traditional',
+    ax.text(x_max - pad, bottom_ref + pad, 'Self-Expression\n+ Traditional',
             ha='right', va='bottom', fontsize=8.5, color='gray', alpha=0.55, style='italic')
 
-    # ── Legends ──
-    legend_zones = ax.legend(
-        handles=zone_handles, title='Cultural Zone',
-        loc='upper left', fontsize=7, title_fontsize=8, framealpha=0.9,
-    )
-    ax.add_artist(legend_zones)
+    # ── Off-scale callouts (centroid above the y-crop) ──
+    OFFSCALE_RED = '#d62728'
+    if offscale_entries:
+        # Dashed line marks where the real data crop ends; markers above it
+        # live in the reserved buffer band, fully inside the axes (no
+        # clip_on=False), so they never reach into the title. Number sits
+        # just below the triangle (not above it) so there's no way for it
+        # to creep back up toward the title.
+        ax.axhline(y=Y_CROP, color='gray', linestyle=':', linewidth=0.8, alpha=0.5)
+        tri_y = Y_CROP + 0.32
+        callout_lines = [f'Off-scale (above y={Y_CROP}):']
+        for i, (label, cx, cy, color, n) in enumerate(offscale_entries, start=1):
+            tri_x = min(max(cx, x_min + 0.3), x_max - 0.3)
+            # Fill keeps the model's own color; only the outline is red,
+            # marking it as an off-scale callout.
+            ax.scatter(tri_x, tri_y, marker='^', s=300,
+                       facecolors=color, edgecolors=OFFSCALE_RED,
+                       linewidth=2.0, zorder=12)
+            ax.annotate(f'[{i}]', xy=(tri_x, tri_y), xytext=(0, -12),
+                        textcoords='offset points', ha='center', va='top',
+                        fontsize=10, fontweight='bold', color=OFFSCALE_RED,
+                        zorder=13)
+            callout_lines.append(f'  [{i}] {label}   ({cx:.2f}, {cy:.2f})')
+        ax.text(0.99, 0.99, '\n'.join(callout_lines),
+                transform=ax.transAxes, ha='right', va='top',
+                fontsize=12, family='monospace', color='black',
+                bbox=dict(boxstyle='round,pad=0.6', facecolor='white',
+                          alpha=0.92, edgecolor='gray', linewidth=1.0),
+                zorder=14)
+
+    # ── Legend ──
+    # Model identities are already labeled inline next to each star
+    # (consistent with the baseline map), so only the zone-color legend
+    # is needed here — no separate models legend.
     ax.legend(
-        handles=model_handles, title='LLM Models  (★ = centroid)',
-        loc='lower right', fontsize=8, title_fontsize=8.5, framealpha=0.9,
+        handles=zone_handles, title='Cultural Zone',
+        loc='upper left', fontsize=11, title_fontsize=13, framealpha=0.9,
     )
 
     ax.grid(True, alpha=0.18)

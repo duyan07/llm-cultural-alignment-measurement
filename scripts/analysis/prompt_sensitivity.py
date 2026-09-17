@@ -1,12 +1,12 @@
 """
-Prompt Sensitivity Analysis  (Stage 4)
+Prompt Sensitivity Analysis
 
 Measures instrument instability by varying prompt wording while holding
 everything else fixed. For each (model, question), runs all 30 prompt
 combinations (3 tones × 10 variants) at a fixed seed / temperature=0,
 so any response change is purely attributable to wording, not randomness.
 
-Contrast with stochastic_sensitivity.py (Stage 3), which fixes the prompt
+Contrast with stochastic_sensitivity.py, which fixes the prompt
 and varies the seed.
 
 Open models (Ollama): seed=0, temperature=0  → fully deterministic
@@ -25,7 +25,7 @@ Usage:
     # Specific models (overrides --model-set)
     python scripts/analysis/prompt_sensitivity.py --models gemma2:2b qwen2.5:7b
 
-    # Run at temp=1.0 for map-level comparison with Stage 3 (stochastic)
+    # Run at temp=1.0 for map-level comparison with stochastic sensitivity
     python scripts/analysis/prompt_sensitivity.py --temperature 1.0
 """
 
@@ -153,16 +153,9 @@ class PromptSensitivityRunner:
                  model_set: str = 'all',
                  temperature: float = 0.0):
         """
-        Args:
-            models: Explicit list of (model_name, provider) tuples; overrides
-                    model_set when provided.
-            tones: Tone names to sweep (default: all 3).
-            variants: Variant indices to sweep (default: all 10).
-            model_set: 'all' (default) runs open + API models, 'open' runs
-                       Ollama-only, 'api' runs proprietary models only.
-            temperature: Sampling temperature. Use 0.0 (default) for clean
-                         question-level isolation of prompt variance. Use 1.0
-                         to match Stage 3 (stochastic) conditions for map-level comparison.
+        temperature: 0.0 (default) isolates prompt-wording variance cleanly;
+        use 1.0 to match stochastic-sensitivity conditions for map-level
+        comparison. Remaining args mirror the CLI flags below.
         """
         self.model_set   = model_set
         self.tones       = tones    or list(TONES.keys())
@@ -342,7 +335,6 @@ class PromptSensitivityRunner:
         for (model, question_id), group in flat_df.groupby(['model', 'question_id']):
             question_info = QUESTIONS[question_id]
 
-            # Deserialise
             all_parsed = []
             for pv in group['parsed_value']:
                 try:
@@ -350,7 +342,6 @@ class PromptSensitivityRunner:
                 except (json.JSONDecodeError, TypeError):
                     all_parsed.append(None)
 
-            # Reference value: (standard, variant 0)
             ref_row = group[
                 (group['tone'] == REFERENCE_TONE) &
                 (group['variant'] == REFERENCE_VARIANT)
@@ -362,7 +353,6 @@ class PromptSensitivityRunner:
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            # Non-reference values for sign-flip counting
             non_ref = group[
                 ~((group['tone'] == REFERENCE_TONE) &
                   (group['variant'] == REFERENCE_VARIANT))

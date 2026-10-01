@@ -4,6 +4,12 @@ Does an LLM's position on the Inglehart-Welzel cultural map reflect a real cultu
 
 See [docs/experiment_overview.md](docs/experiment_overview.md) for the full methodology, math, and current findings. See [docs/STRUCTURE.md](docs/STRUCTURE.md) for a map of the repository, and [docs/COMMANDS.md](docs/COMMANDS.md) for the full command reference.
 
+## Known issue — cultural map coefficients
+
+The affine transform that places PCA scores on the Inglehart-Welzel map (`x = 1.81·PC1 + 0.38, y = 1.61·PC2 - 0.01`, in `src/cultural_map.py` and the scripts that duplicate it) has a transposed-digit error inherited from Tao et al. (PNAS Nexus, 2024). Per the [official WVS SPSS syntax](https://worldvaluessurvey.org/WVSContents.jsp?CMSID=tradrat) (`COMPUTE SurvSAgg = 1.81 * SurvSelf + .038`, `COMPUTE TradAgg = 1.61 * TradRat5 - .1`), the correct constants are `+0.038` and `-0.1`. Matt Hall (Equinor) flagged this in September 2026 — thank you, Matt.
+
+This repo intentionally keeps the erroneous constants so the code stays consistent with all already-generated data, figures, and reported numbers (regenerating everything would mean rerunning the full LLM-querying pipeline). The error is a uniform translation of every coordinate and does not change any comparison computed entirely within this pipeline (model-to-model, model-to-closest-country, clustering, NSR) — it only affects comparisons against externally-sourced absolute coordinates, such as the literal PNAS GPT-4o reference point quoted in `scripts/baseline/visualize_baseline.py`. A version of this pipeline with the corrected constants is maintained separately for follow-on work.
+
 ## Pipeline
 
 The pipeline is one continuous measurement process, not a set of independent steps — each part feeds the next:

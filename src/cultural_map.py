@@ -155,11 +155,17 @@ class CulturalMapGenerator:
         """
         Rescale principal components to match Inglehart-Welzel map coordinates.
 
-        From PNAS paper:
+        From PNAS paper (Tao et al.):
         PC1' = 1.81 * PC1 + 0.38
         PC2' = 1.61 * PC2 - 0.01
 
         This maps the components to the traditional cultural map scale.
+
+        NOTE: these constants are transposed-digit errors — the WVS's own SPSS
+        syntax gives +0.038 and -0.1 (worldvaluessurvey.org/WVSContents.jsp?CMSID=tradrat).
+        Kept as-is here so the code matches every already-generated result/figure
+        in this repo; see the README's "Known issue" section. It's a uniform
+        translation, so relative comparisons within this pipeline are unaffected.
         """
         print("\nRescaling components to cultural map coordinates...")
 

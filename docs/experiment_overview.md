@@ -193,6 +193,8 @@ Single source of truth per pipeline part, all consistent as of July 4:
 
 Older files with matching names have been moved to `data/results/_archive/` and `outputs/_archive/` — kept for auditability, out of the way of the current glob-based pipeline.
 
+**Known coefficient discrepancy.** The map-rescaling constants in `src/cultural_map.py` (`+0.38`, `-0.01`) are the values inherited from Tao et al., not the correct WVS constants (`+0.038`, `-0.1` — see the [official SPSS syntax](https://worldvaluessurvey.org/WVSContents.jsp?CMSID=tradrat)). Flagged by Matt Hall (Equinor), September 2026; see the README's "Known issue" section for why it's left uncorrected here. Every coordinate below is on the uncorrected scale, consistently — relative comparisons (distances, clustering, NSR) are unaffected, but the "0.38 map units from the PNAS GPT-4o reference" figure in 9.1 below carries the same uncertainty as that external reference point.
+
 ## 9. Takeaways — what the numbers say
 
 ### 9.1 Western bias replicates, but its explanation shifts

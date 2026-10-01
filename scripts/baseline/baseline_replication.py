@@ -269,6 +269,8 @@ class BaselineReplicator:
             np.array(standardized).reshape(1, -1)
         )[0]
 
+        # Constants intentionally match src/cultural_map.py's known-incorrect
+        # coefficients — see that file's docstring / README "Known issue".
         x = 1.81 * pca_scores[0] + 0.38
         y = 1.61 * pca_scores[1] - 0.01
 

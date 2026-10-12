@@ -48,6 +48,22 @@ QUESTION_SHORT = {
     'Y002': 'Post-Mat.',   'Y003': 'Autonomy',
 }
 
+# Abbreviated single-line labels for tight axes (paper figures)
+QUESTION_ABBREV = {
+    'A008': 'Happiness',   'A165': 'Trust',
+    'E018': 'Authority',   'E025': 'Petition',
+    'F063': 'God',         'F118': 'Homosex.',
+    'F120': 'Abortion',    'G006': 'Nat. Pride',
+    'Y002': 'Post-Mat.',   'Y003': 'Autonomy',
+}
+
+# Response scale shown next to QUESTION_ABBREV, e.g. 'Happiness (1-4)'
+QUESTION_SCALE = {
+    'A008': '1-4',  'A165': 'A/B',    'E018': '1-3',    'E025': 'A/B/C',
+    'F063': '1-10', 'F118': '1-10',   'F120': '1-10',   'G006': '1-4',
+    'Y002': 'rank 2', 'Y003': 'pick 5',
+}
+
 NUMERIC_QUESTIONS = {'A008', 'E018', 'F063', 'F118', 'F120', 'G006'}
 
 # ── Tone colours ──────────────────────────────────────────────────────────────
@@ -71,6 +87,9 @@ MODEL_PARAMS = {
     'yi:6b':                '6B',
     'salmatrafi/acegpt:7b': '7B',
 }
+
+# Models queried through a provider API (not covered by '_open_' result files)
+API_MODELS = {'gpt-4o', 'gpt-4o-mini', 'claude-sonnet-4-6'}
 
 MODEL_COLORS = [
     '#e41a1c', '#ff7f00', '#984ea3', '#4daf4a',

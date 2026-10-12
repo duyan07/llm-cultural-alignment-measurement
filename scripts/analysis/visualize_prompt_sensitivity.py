@@ -3,8 +3,8 @@ Prompt Sensitivity Visualization
 
 Generates four figures from prompt_sensitivity_flat_*.csv:
 
-1. Flip-rate heatmap     — model × question, cell = fraction of variants
-                           that gave a different answer than the reference
+1. Flip-rate heatmap     — model (rows) × question (cols), cell = fraction of
+                           variants that gave a different answer than the reference
 2. Tone comparison       — for each question, how does the mean/mode shift
                            across standard / friendly / combative tones
 3. Cultural map clouds   — each of the 30 (tone×variant) responses projected
@@ -39,6 +39,8 @@ from src.viz_common import (
     QUESTION_ORDER,
     QUESTION_LABELS,
     QUESTION_SHORT,
+    QUESTION_ABBREV,
+    QUESTION_SCALE,
     NUMERIC_QUESTIONS,
     TONE_COLORS,
     MODEL_COLORS,
@@ -89,8 +91,9 @@ def load_data(flat_path=None, model_set=None):
 
 def plot_flip_heatmap(flat_df: pd.DataFrame, out_path: Path) -> None:
     """
-    Rows = questions, columns = models.
+    Rows = models, columns = questions.
     Cell colour = sign-flip rate (0=stable green, 1=unstable red).
+    Cells with no parseable responses are left blank and marked n/a.
     """
     models = sorted(flat_df['model'].unique())
 
@@ -120,43 +123,42 @@ def plot_flip_heatmap(flat_df: pd.DataFrame, out_path: Path) -> None:
                    (frozenset(row['ref_val']) if isinstance(row['ref_val'], list) else {row['ref_val']})
 
     non_ref['flipped'] = non_ref.apply(is_flip, axis=1)
-    flip_rates = non_ref.groupby(['model', 'question_id'])['flipped'].mean().unstack('model')
-    flip_rates = flip_rates.reindex(QUESTION_ORDER)[models]
+    flip_rates = non_ref.groupby(['model', 'question_id'])['flipped'].mean().unstack('question_id')
+    flip_rates = flip_rates.reindex(models)[QUESTION_ORDER]
+    values = flip_rates.values.astype(float)
 
-    cmap = LinearSegmentedColormap.from_list('flip', ['#2ecc71', '#f39c12', '#e74c3c'])
+    cmap = LinearSegmentedColormap.from_list('flip', ['#2ecc71', '#f1c40f', '#e74c3c'])
 
-    fig, ax = plt.subplots(figsize=(max(10, len(models) * 1.3), 6))
-    im = ax.imshow(flip_rates.values.astype(float),
-                   aspect='auto', cmap=cmap, vmin=0, vmax=1)
+    fig, ax = plt.subplots(figsize=(13, 5.2))
+    im = ax.imshow(values, aspect='auto', cmap=cmap, vmin=0, vmax=1)
 
-    ax.set_xticks(range(len(models)))
-    ax.set_xticklabels([model_label(m) for m in models],
-                       rotation=30, ha='right', fontsize=9)
-    ax.set_yticks(range(len(QUESTION_ORDER)))
-    ax.set_yticklabels(
-        [QUESTION_LABELS.get(q, q).replace('\n', ' ') for q in QUESTION_ORDER],
-        fontsize=9
+    ax.set_xticks(range(len(QUESTION_ORDER)))
+    ax.set_xticklabels(
+        [f"{QUESTION_ABBREV[q]} ({QUESTION_SCALE[q]})" for q in QUESTION_ORDER],
+        rotation=35, ha='right', fontsize=11,
     )
+    ax.set_yticks(range(len(models)))
+    ax.set_yticklabels([model_label_inline(m) for m in models], fontsize=11)
 
-    for i in range(len(QUESTION_ORDER)):
-        for j, model in enumerate(models):
-            val = flip_rates.values[i, j]
-            if not np.isnan(val):
-                txt_color = 'white' if val > 0.6 or val < 0.15 else 'black'
+    for i in range(len(models)):
+        for j in range(len(QUESTION_ORDER)):
+            val = values[i, j]
+            if np.isnan(val):
+                ax.text(j, i, 'n/a', ha='center', va='center',
+                        fontsize=9.5, color='#888888', style='italic')
+            else:
+                txt_color = 'white' if val > 0.56 or val < 0.2 else 'black'
                 ax.text(j, i, f'{val:.2f}',
-                        ha='center', va='center', fontsize=8, color=txt_color)
+                        ha='center', va='center', fontsize=9.5, color=txt_color)
 
-    plt.colorbar(im, ax=ax,
-                 label='Sign-flip rate  (0 = always same answer, 1 = always different)')
-    ax.set_title(
-        'Prompt Sensitivity — Sign-Flip Rate per Model × Question\n'
-        '(fraction of 29 non-reference variants that gave a different answer)',
-        fontsize=11, fontweight='bold'
-    )
+    cbar = plt.colorbar(im, ax=ax, fraction=0.03, pad=0.015)
+    cbar.set_label('Flip rate', fontsize=10)
+    ax.set_title('Prompt Sensitivity — Sign-Flip Rate per (Model × Question)',
+                 fontsize=12, fontweight='bold', pad=8)
 
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=180, bbox_inches='tight')
     plt.close()
     print(f"Saved: {out_path}")
 
@@ -650,7 +652,7 @@ def main():
     ts = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
     ms_tag = f"_{args.model_set}" if args.model_set else ''
 
-    plot_flip_heatmap(flat_df, OUTPUTS_DIR / f"flip_rate_heatmap{ms_tag}_{ts}.png")
+    plot_flip_heatmap(flat_df, OUTPUTS_DIR / f"flip_rate_wide{ms_tag}_{ts}.png")
     plot_tone_comparison(flat_df, OUTPUTS_DIR / f"tone_comparison{ms_tag}_{ts}.png")
 
     pca_gen     = load_pca()

@@ -1,5 +1,7 @@
 """Plots the 88-country human baseline alongside queried LLM positions on the cultural map, one figure per tone.
 
+The map is cropped vertically; models beyond the crop are pinned to the edge and listed in an inset.
+
 Usage:
     # Generate maps for all tones that have results (default):
     python scripts/baseline/visualize_baseline.py
@@ -24,7 +26,7 @@ from glob import glob
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.geo_data import ZONE_COLORS, quadrant_label, typical_countries
-from src.viz_common import load_baseline
+from src.viz_common import API_MODELS, load_baseline, model_label_inline
 
 # Paths
 RESULTS_DIR = Path("data/results/baseline")
@@ -57,13 +59,33 @@ def load_model_results(results_path=None, tone=None, model_set=None):
             "Run scripts/baseline/baseline_replication.py first."
         )
     # When no model_set filter is applied, merge all files so open + api
-    # models appear together. When filtered to a specific set, use latest only.
+    # models appear together, newer runs superseding older ones. When filtered
+    # to a specific set, use latest only.
     if model_set:
         files = [files[-1]]
+    files = sorted(files, key=_timestamp_from_path)
+    df = pd.DataFrame()
     for f in files:
         print(f"Loading results from: {f}")
-    df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
+        df = _merge_run(df, pd.read_csv(f), _model_set_from_path(f))
     return df, _tone_from_path(files[-1]), _timestamp_from_path(files[-1])
+
+
+def _merge_run(df, run_df, run_set):
+    """Overlay a newer run on earlier rows: the run replaces every earlier row for
+    the models it covers ('open' = non-API models, 'api' = API models, 'all' = both),
+    so a model absent from the newer run (e.g. unprojectable in a rerun) is dropped."""
+    if df.empty:
+        return run_df
+    is_api = df['model'].isin(API_MODELS)
+    covered = {'open': ~is_api, 'api': is_api}.get(run_set, pd.Series(True, index=df.index))
+    return pd.concat([df[~covered], run_df], ignore_index=True)
+
+
+def _model_set_from_path(path):
+    """Extract model set ('all'/'open'/'api') from a result filename; old-format files count as 'all'."""
+    m = re.search(r'baseline_models_[a-z]+_(all|open|api)_', str(path))
+    return m.group(1) if m else 'all'
 
 
 def _filter_by_model_set(paths, model_set):
@@ -91,10 +113,32 @@ def _timestamp_from_path(path):
 
 # ── Visualization ─────────────────────────────────────────────────────────────
 
-def create_visualization(baseline_df, models_df, output_path, tone='standard'):
-    """Create the cultural map: country dots + LLM stars + country labels."""
+# Label placement for each model's name box: (dx, dy) in points from the star, text alignment.
+# Hand-tuned for the standard-tone map; models not listed get the default.
+LABEL_OFFSETS = {
+    'gemma2:2b':         (-12, -5, 'right'),
+    'claude-sonnet-4-6': (12, -5, 'left'),
+    'yi:6b':             (-3, 8, 'left'),
+    'gpt-4o':            (34, 9, 'left'),
+    'qwen2.5:7b':        (2, 7, 'left'),
+    'phi3:mini':         (-10, -6, 'right'),
+    'mistral:7b':        (2, -2, 'left'),
+    'gpt-4o-mini':       (0, -10, 'center'),
+}
+DEFAULT_LABEL_OFFSET = (10, 8, 'left')
 
-    _, ax = plt.subplots(figsize=(16, 11))
+
+def create_visualization(baseline_df, models_df, output_path, tone='standard',
+                         xlim=(-3.5, 6.5), y_clip=2.6):
+    """Create the cultural map: country dots + LLM stars, cropped to |y| <= y_clip.
+
+    Models beyond the crop are drawn as triangles pinned to the edge, numbered,
+    and listed with their true coordinates in an inset box.
+    """
+    models_df = models_df.dropna(subset=['survival_selfexpression', 'traditional_secular'])
+    models_df = models_df.sort_values('model').reset_index(drop=True)
+
+    fig, ax = plt.subplots(figsize=(8.4, 5.4))
 
     # ── Country dots colored by cultural zone ──
     zone_handles = []
@@ -105,12 +149,8 @@ def create_visualization(baseline_df, models_df, output_path, tone='standard'):
         ax.scatter(
             zone_data['survival_selfexpression'],
             zone_data['traditional_secular'],
-            c=color,
-            s=80,
-            alpha=0.85,
-            edgecolors='white',
-            linewidth=0.4,
-            zorder=2,
+            c=color, s=45, alpha=0.75,
+            edgecolors='white', linewidth=0.4, zorder=2,
         )
         zone_handles.append(mpatches.Patch(color=color, label=zone))
 
@@ -119,96 +159,74 @@ def create_visualization(baseline_df, models_df, output_path, tone='standard'):
         ax.annotate(
             row['iso3'],
             xy=(row['survival_selfexpression'], row['traditional_secular']),
-            xytext=(3, 3),
-            textcoords='offset points',
-            fontsize=6.5,
-            color='#222222',
-            zorder=3,
+            xytext=(3, 3), textcoords='offset points',
+            fontsize=6, color='#555555', zorder=3,
         )
 
-    # ── LLM model stars ──
-    model_colors = ['#e41a1c', '#ff7f00', '#984ea3', '#4daf4a',
-                    '#377eb8', '#a65628', '#f781bf', '#999999']
-    model_handles = []
-
-    for idx, (_, model) in enumerate(models_df.iterrows()):
-        color = model_colors[idx % len(model_colors)]
-        ax.scatter(
-            model['survival_selfexpression'],
-            model['traditional_secular'],
-            c=color,
-            s=450,
-            marker='*',
-            edgecolors='black',
-            linewidth=1.5,
-            zorder=10,
-        )
+    # ── LLM model stars (on-scale) / edge triangles (off-scale) ──
+    off_scale = []
+    for idx, model in models_df.iterrows():
+        color = plt.cm.tab10(idx % 10)
+        x, y = model['survival_selfexpression'], model['traditional_secular']
+        if abs(y) > y_clip:
+            off_scale.append((model, color))
+            continue
+        ax.scatter(x, y, color=color, s=420, marker='*',
+                   edgecolors='black', linewidth=1.3, zorder=10)
+        dx, dy, ha = LABEL_OFFSETS.get(model['model'], DEFAULT_LABEL_OFFSET)
+        leader = (dict(arrowstyle='-', color='#555555', linewidth=0.8)
+                  if np.hypot(dx, dy) > 20 else None)
         ax.annotate(
-            model['model'],
-            xy=(model['survival_selfexpression'], model['traditional_secular']),
-            xytext=(10, 8),
-            textcoords='offset points',
-            fontsize=8.5,
-            fontweight='bold',
-            bbox=dict(boxstyle='round,pad=0.25', facecolor=color, alpha=0.75,
+            model_label_inline(model['model']),
+            xy=(x, y), xytext=(dx, dy), textcoords='offset points',
+            ha=ha, va='center', fontsize=11, fontweight='bold',
+            bbox=dict(boxstyle='round,pad=0.25', facecolor=color, alpha=0.85,
                       edgecolor='black', linewidth=0.8),
-            zorder=11,
+            arrowprops=leader, zorder=11,
         )
-        model_handles.append(
-            plt.Line2D([0], [0], marker='*', color='w', markerfacecolor=color,
-                       markeredgecolor='black', markersize=12, label=model['model'])
-        )
+
+    off_scale.sort(key=lambda mc: mc[0]['survival_selfexpression'])
+    lines = [f'Off-scale (|y| > {y_clip}):' if any(m['traditional_secular'] < 0 for m, _ in off_scale)
+             else f'Off-scale (above y = {y_clip}):']
+    for n, (model, color) in enumerate(off_scale, start=1):
+        x, y = model['survival_selfexpression'], model['traditional_secular']
+        top = y > 0
+        edge_y = y_clip if top else -y_clip
+        ax.scatter(x, edge_y, color=color, s=380, marker='^' if top else 'v',
+                   edgecolors='#c0392b', linewidth=1.8, zorder=10, clip_on=False)
+        ax.annotate(f'[{n}]', xy=(x, edge_y), xytext=(0, -20 if top else 20),
+                    textcoords='offset points', ha='center', va='center',
+                    fontsize=10, fontweight='bold', color='#c0392b', zorder=11)
+        lines.append(f'[{n}] {model_label_inline(model["model"])}  ({x:.2f}, {y:.2f})')
+    if off_scale:
+        ax.text(0.985, 0.965, '\n'.join(lines), transform=ax.transAxes,
+                ha='right', va='top', multialignment='right', fontsize=8.5,
+                family='monospace', zorder=12,
+                bbox=dict(boxstyle='round,pad=0.4', facecolor='white',
+                          edgecolor='#999999', alpha=0.95))
 
     # ── Axes ──
-    ax.set_xlabel('Survival  ←                    →  Self-Expression Values',
-                  fontsize=12, fontweight='bold', labelpad=8)
-    ax.set_ylabel('Traditional  ←               →  Secular Values',
-                  fontsize=12, fontweight='bold', labelpad=8)
-
+    ax.set_xlim(*xlim)
+    ax.set_ylim(-y_clip, y_clip)
+    ax.set_xlabel('Survival  ←  →  Self-Expression', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Traditional  ←  →  Secular', fontsize=12, fontweight='bold')
     ax.set_title(
-        f'LLM Cultural Alignment — Baseline Replication  [{tone.capitalize()} tone]',
-        fontsize=14, fontweight='bold', pad=16,
+        f'Cultural Map — LLM Positions vs {len(baseline_df)} IVS Countries '
+        f'({tone.capitalize()} Tone)',
+        fontsize=12, fontweight='bold', pad=14,
     )
-
-    # ── Quadrant reference lines and labels ──
     ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.6, alpha=0.4)
     ax.axvline(x=0, color='gray', linestyle='--', linewidth=0.6, alpha=0.4)
-
-    x_min, x_max = ax.get_xlim()
-    y_min, y_max = ax.get_ylim()
-    pad = 0.15
-
-    ax.text(x_max - pad, y_max - pad, 'Self-Expression\n+ Secular',
-            ha='right', va='top', fontsize=9, color='gray', alpha=0.6, style='italic')
-    ax.text(x_min + pad, y_max - pad, 'Survival\n+ Secular',
-            ha='left', va='top', fontsize=9, color='gray', alpha=0.6, style='italic')
-    ax.text(x_min + pad, y_min + pad, 'Survival\n+ Traditional',
-            ha='left', va='bottom', fontsize=9, color='gray', alpha=0.6, style='italic')
-    ax.text(x_max - pad, y_min + pad, 'Self-Expression\n+ Traditional',
-            ha='right', va='bottom', fontsize=9, color='gray', alpha=0.6, style='italic')
-
-    # ── Two-column legend: zones left, models right ──
-    legend_zones = ax.legend(
-        handles=zone_handles,
-        title='Cultural Zone',
-        loc='upper left',
-        fontsize=7.5,
-        title_fontsize=8,
-        framealpha=0.9,
-    )
-    ax.add_artist(legend_zones)
-    ax.legend(
-        handles=model_handles,
-        title='LLM Models',
-        loc='lower right',
-        fontsize=8,
-        title_fontsize=9,
-        framealpha=0.9,
-    )
-
     ax.grid(True, alpha=0.2)
+
+    ax.legend(
+        handles=zone_handles, title='Cultural Zone',
+        loc='upper center', bbox_to_anchor=(0.5, -0.12), ncol=5,
+        fontsize=9, title_fontsize=10, framealpha=0.9,
+    )
+
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.savefig(output_path, dpi=180, bbox_inches='tight')
     plt.close()
     print(f"Saved visualization: {output_path}")
 
@@ -294,7 +312,7 @@ def main():
             args.results, args.tone, model_set=ms)
         tone = args.tone or detected_tone
         output_path = (Path(args.output) if args.output else
-                       OUTPUTS_DIR / f"baseline_with_models_{tone}{ms_tag}_{timestamp}.png")
+                       OUTPUTS_DIR / f"baseline_map_cropped_{tone}{ms_tag}_{timestamp}.png")
         summary_path = output_path.with_suffix('.txt')
         create_visualization(baseline_df, models_df, output_path, tone=tone)
         text = print_summary(baseline_df, models_df, tone=tone)
@@ -307,7 +325,7 @@ def main():
         for tone in ['standard', 'friendly', 'combative']:
             try:
                 models_df, _, timestamp = load_model_results(tone=tone, model_set=ms)
-                output_path = OUTPUTS_DIR / f"baseline_with_models_{tone}{ms_tag}_{timestamp}.png"
+                output_path = OUTPUTS_DIR / f"baseline_map_cropped_{tone}{ms_tag}_{timestamp}.png"
                 summary_path = output_path.with_suffix('.txt')
                 create_visualization(baseline_df, models_df, output_path, tone=tone)
                 text = print_summary(baseline_df, models_df, tone=tone)

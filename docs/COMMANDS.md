@@ -69,7 +69,7 @@ python scripts/baseline/visualize_baseline.py --tone standard
 python scripts/baseline/visualize_baseline.py --results data/results/baseline/baseline_models_standard_open_<ts>.csv
 ```
 
-**Outputs:** `outputs/baseline/baseline_with_models_{tone}{_model_set}_{ts}.png`
+**Outputs:** `outputs/baseline/baseline_map_cropped_{tone}{_model_set}_{ts}.png` (+ `.txt` summary)
 
 ---
 
@@ -137,7 +137,7 @@ python scripts/analysis/visualize_prompt_sensitivity.py --flat data/results/prom
 python scripts/analysis/visualize_tone_shift.py
 ```
 
-**Outputs:** `outputs/prompt_sensitivity/`
+**Outputs:** `outputs/prompt_sensitivity/` — includes `flip_rate_wide_{model_set}_{ts}.png` and `tone_shift_wide_{ts}.png`
 
 ---
 
@@ -157,7 +157,7 @@ python scripts/analysis/variance_decomposition.py \
   --prompt-flat data/results/prompt_sensitivity/prompt_sensitivity_flat_open_<ts>.csv
 ```
 
-**Outputs** (in `outputs/variance_decomposition/`)**:** `variance_bars_{model_set}_{ts}.png`, `noise_signal_heatmap_{model_set}_{ts}.png`, `combined_map_{model_set}_{ts}.png`, `variance_decomposition_{model_set}_{ts}.csv`
+**Outputs** (in `outputs/variance_decomposition/`)**:** `variance_bars_simplified_{model_set}_{ts}.png`, `noise_signal_heatmap_{model_set}_{ts}.png`, `nsr_scatter_{model_set}_{ts}.png`, `combined_map_{model_set}_{ts}.png`, `variance_decomposition_{model_set}_{ts}.csv`
 
 ---
 

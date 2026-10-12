@@ -14,11 +14,12 @@ For each model, we compute four signed shifts:
 Positive Δx = shifted toward Self-Expression;   negative = toward Survival.
 Positive Δy = shifted toward Secular-Rational;  negative = toward Traditional.
 
-Reported as a heatmap with a diverging colormap (RdBu_r) so both direction and
-magnitude are readable at a glance. A final "Panel mean" row summarizes the
+Reported as a wide heatmap (one column per model, one row per shift) with a
+diverging colormap (RdBu_r) so both direction and magnitude are readable at a
+glance. A final "Panel mean" column summarizes the
 average directional effect across all projectable models — this reveals
 systematic tone effects (e.g. combative tone shifting the whole panel toward
-Secular-Rational) that per-model rows alone would obscure.
+Secular-Rational) that per-model columns alone would obscure.
 
 Data sources (kept in sync with the rest of the pipeline):
   open-weight baseline: baseline_models_{tone}_open_20260707_050850.csv
@@ -40,15 +41,17 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
+from matplotlib.ticker import MultipleLocator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+from src.viz_common import API_MODELS
 
 BASELINE_DIR = Path('data/results/baseline')
 OUTPUTS_DIR  = Path('outputs/prompt_sensitivity')
 
 OPEN_TS = '20260707_050850'
 API_TS  = '20260506_192420'
-API_MODELS = {'gpt-4o', 'gpt-4o-mini', 'claude-sonnet-4-6'}
 
 MODEL_LABEL = {
     'gpt-4o':            'GPT-4o',
@@ -99,12 +102,14 @@ def build_shift_table() -> pd.DataFrame:
 
 
 def plot(m: pd.DataFrame, out_path: Path) -> None:
-    per_model = m[['dx_fri', 'dy_fri', 'dx_com', 'dy_com']].values
-    panel_mean = per_model.mean(axis=0)          # column-wise mean = panel-level shift
-    data = np.vstack([per_model, panel_mean])
+    """Wide layout: one column per model plus a 'Panel mean' column, one row per shift."""
+    shift_cols = ['dx_fri', 'dy_fri', 'dx_com', 'dy_com']
+    per_model  = m[shift_cols].values.T          # rows = shifts, cols = models
+    panel_mean = per_model.mean(axis=1, keepdims=True)   # row-wise mean = panel-level shift
+    data = np.hstack([per_model, panel_mean])
 
-    row_labels = list(m.index) + ['Panel mean']
-    col_labels = [
+    col_labels = list(m.index) + ['Panel mean']
+    row_labels = [
         r'$\Delta x$ friendly', r'$\Delta y$ friendly',
         r'$\Delta x$ combative', r'$\Delta y$ combative',
     ]
@@ -112,34 +117,30 @@ def plot(m: pd.DataFrame, out_path: Path) -> None:
     vmax = float(np.abs(data).max())
     norm = TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
 
-    fig, ax = plt.subplots(figsize=(7, 6))
+    fig, ax = plt.subplots(figsize=(11, 3.2))
     im = ax.imshow(data, aspect='auto', cmap='RdBu_r', norm=norm)
 
-    ax.set_xticks(range(4))
-    ax.set_xticklabels(col_labels, fontsize=10)
+    ax.set_xticks(range(len(col_labels)))
+    ax.set_xticklabels(col_labels, rotation=30, ha='right', fontsize=10.5)
     ax.set_yticks(range(len(row_labels)))
-    ax.set_yticklabels(row_labels, fontsize=9.5)
+    ax.set_yticklabels(row_labels, fontsize=11)
 
     for i, row in enumerate(data):
         for j, val in enumerate(row):
             color = 'white' if abs(val) > vmax * 0.55 else 'black'
             ax.text(j, i, f'{val:+.2f}', ha='center', va='center',
-                    fontsize=9, color=color, fontweight='bold')
+                    fontsize=9.5, color=color, fontweight='bold')
 
-    ax.axhline(len(m) - 0.5, color='black', linewidth=1.2)
+    ax.axvline(len(m) - 0.5, color='black', linewidth=1.2)
 
-    cbar = plt.colorbar(im, ax=ax, fraction=0.04, pad=0.03)
-    cbar.set_label('Shift on cultural map (Δ from standard tone)', fontsize=9)
+    cbar = plt.colorbar(im, ax=ax, fraction=0.025, pad=0.015)
+    cbar.set_label('Δ from standard tone', fontsize=10)
+    cbar.locator = MultipleLocator(0.5)
+    cbar.update_ticks()
 
     ax.set_title(
-        'Directional Tone Shift — how each model moves on the cultural map\n'
-        'when tone changes from standard to friendly or combative',
-        fontsize=11, fontweight='bold', pad=12,
-    )
-    ax.set_xlabel(
-        'Blue = shifted toward Survival / Traditional     '
-        'Red = shifted toward Self-Expression / Secular',
-        fontsize=8.5, labelpad=8,
+        'Directional Tone Shift — Coordinate Move from Standard to Friendly/Combative',
+        fontsize=12, fontweight='bold', pad=8,
     )
 
     plt.tight_layout()
@@ -153,7 +154,7 @@ def main() -> None:
     m = build_shift_table()
 
     ts = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
-    plot(m, OUTPUTS_DIR / f'tone_shift_heatmap_{ts}.png')
+    plot(m, OUTPUTS_DIR / f'tone_shift_wide_{ts}.png')
 
     print('\nSigned shifts (Δ from standard):')
     print(m[['dx_fri', 'dy_fri', 'dx_com', 'dy_com']].round(2).to_string())

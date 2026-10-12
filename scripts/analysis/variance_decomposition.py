@@ -14,10 +14,12 @@ All variances are computed in IVS-numeric space so they are comparable across
 questions with different response types.
 
 Outputs:
-  1. variance_bars_<ts>.png    — σ_seed vs σ_prompt per question, σ_culture as
-                                  reference line; one panel per model
+  1. variance_bars_simplified_<ts>.png — mean σ_seed + σ_prompt per question
+                                  (averaged across models), σ_culture as reference tick
   2. noise_signal_heatmap_<ts>.png — noise-to-signal ratio per (model, question)
-  3. combined_map_<ts>.png     — seed clouds + prompt clouds overlaid side-by-side
+  3. nsr_scatter_<ts>.png      — σ_culture vs σ_seed + σ_prompt, one point per
+                                  (model, question); above the diagonal = NSR > 1
+  4. combined_map_<ts>.png     — seed clouds + prompt clouds overlaid side-by-side
 
 Usage:
     python scripts/analysis/variance_decomposition.py
@@ -43,6 +45,7 @@ from src.geo_data import ZONE_COLORS
 from src.viz_common import (
     QUESTION_ORDER,
     QUESTION_SHORT,
+    QUESTION_ABBREV,
     MODEL_COLORS,
     model_label_inline as model_label,
     parse_value as parse_val,
@@ -161,81 +164,58 @@ def build_decomposition(stoch, prompt, culture) -> pd.DataFrame:
     return merged
 
 
-# ── Figure 1: Variance bars per model ────────────────────────────────────────
+# ── Figure 1: Panel-averaged variance bars ───────────────────────────────────
 
 def plot_variance_bars(decomp: pd.DataFrame, out_path: Path) -> None:
     """
-    One panel per model.  For each question: stacked bar σ_seed (blue) + σ_prompt (orange).
-    Horizontal dashed line = σ_culture (between-model signal).
+    One stacked bar per question: mean σ_seed (blue) + mean σ_prompt (orange),
+    averaged across models. Green tick = σ_culture (between-model signal).
+    Questions are ordered by median noise-to-signal ratio, most reliable first.
     """
-    models = sorted(decomp['model'].unique())
-    n_models = len(models)
-    ncols = 3
-    nrows = int(np.ceil(n_models / ncols))
+    by_q = decomp.groupby('question_id').agg(
+        sigma_seed=('sigma_seed', 'mean'),
+        sigma_prompt=('sigma_prompt', 'mean'),
+        sigma_culture=('sigma_culture', 'first'),
+        nsr_median=('noise_to_signal', 'median'),
+    ).sort_values('nsr_median')
+    n_models = decomp['model'].nunique()
 
-    fig, axes = plt.subplots(nrows, ncols,
-                             figsize=(6 * ncols, 4 * nrows),
-                             sharey=False)
-    axes = np.array(axes).flatten()
+    x = np.arange(len(by_q))
+    bar_w = 0.55
 
-    x = np.arange(len(QUESTION_ORDER))
-    bar_w = 0.5
+    fig, ax = plt.subplots(figsize=(9, 4.4))
+    ax.bar(x, by_q['sigma_seed'], bar_w, color='#4878cf', alpha=0.9,
+           label=r'$\sigma_{\mathrm{seed}}$  (sampling noise)')
+    ax.bar(x, by_q['sigma_prompt'], bar_w, bottom=by_q['sigma_seed'],
+           color='#e87e3a', alpha=0.9,
+           label=r'$\sigma_{\mathrm{prompt}}$  (prompt-wording noise)')
+    for i, cv in enumerate(by_q['sigma_culture']):
+        ax.plot([i - bar_w * 0.6, i + bar_w * 0.6], [cv, cv],
+                color='#2ecc71', linewidth=3, zorder=5,
+                label=r'$\sigma_{\mathrm{culture}}$  (between-model signal)' if i == 0 else None)
 
-    for ax, model in zip(axes, models):
-        mdf = decomp[decomp['model'] == model].set_index('question_id')
+    ax.set_xticks(x)
+    ax.set_xticklabels([QUESTION_ABBREV[q] for q in by_q.index],
+                       rotation=35, ha='right', fontsize=10.5)
+    ax.set_ylabel('Standard deviation (IVS-numeric)', fontsize=10.5)
+    # Headroom so the legend never hides a σ_culture tick
+    top = max((by_q['sigma_seed'] + by_q['sigma_prompt']).max(), by_q['sigma_culture'].max())
+    ax.set_ylim(0, top * 1.35)
+    ax.grid(True, alpha=0.3, axis='y')
+    ax.set_axisbelow(True)
 
-        seed_raw    = [mdf.loc[q, 'sigma_seed']   if q in mdf.index else np.nan
-                       for q in QUESTION_ORDER]
-        prompt_vals = [mdf.loc[q, 'sigma_prompt'] if q in mdf.index else 0
-                       for q in QUESTION_ORDER]
-        cult_vals   = [mdf.loc[q, 'sigma_culture'] if q in mdf.index else 0
-                       for q in QUESTION_ORDER]
+    ax.legend(loc='upper left', fontsize=10, framealpha=0.95)
 
-        seed_unmeasured = all(pd.isna(v) for v in seed_raw)
-        seed_vals = [0 if pd.isna(v) else v for v in seed_raw]
-
-        # σ_seed bar — drawn only where measured; otherwise stack starts at 0
-        ax.bar(x, seed_vals,   bar_w,
-               label='σ_seed (stochastic)',   color='#4878cf', alpha=0.85)
-        ax.bar(x, prompt_vals, bar_w,
-               bottom=seed_vals,
-               label='σ_prompt (prompt sensitivity)', color='#e87e3a', alpha=0.85)
-
-        # σ_culture as step line
-        for i, cv in enumerate(cult_vals):
-            ax.plot([i - bar_w/2, i + bar_w/2], [cv, cv],
-                    color='#2ecc71', linewidth=2.2, zorder=5)
-
-        title = model_label(model)
-        if seed_unmeasured:
-            title += '\n(σ_seed not measured — API has no seed param)'
-        ax.set_title(title, fontsize=10, fontweight='bold',
-                     color='#777777' if seed_unmeasured else 'black')
-        ax.set_xticks(x)
-        ax.set_xticklabels([QUESTION_SHORT[q] for q in QUESTION_ORDER],
-                           rotation=40, ha='right', fontsize=7.5)
-        ax.set_ylabel('σ (IVS numeric)', fontsize=8)
-        ax.grid(True, alpha=0.2, axis='y')
-
-    for ax in axes[n_models:]:
-        ax.set_visible(False)
-
-    seed_patch   = mpatches.Patch(color='#4878cf', label='σ_seed — sampling noise (stochastic)')
-    prompt_patch = mpatches.Patch(color='#e87e3a', label='σ_prompt — wording sensitivity (prompt)')
-    culture_line = plt.Line2D([0], [0], color='#2ecc71', linewidth=2.2,
-                              label='σ_culture — between-model signal')
-    fig.legend(handles=[seed_patch, prompt_patch, culture_line],
-               loc='lower center', ncol=3, fontsize=9,
-               bbox_to_anchor=(0.5, -0.02))
-
-    fig.suptitle(
-        'Variance Decomposition — Noise Sources vs Cultural Signal\n'
-        'Bars = instrument noise (seed + prompt);  Green line = between-model spread',
-        fontsize=13, fontweight='bold', y=1.01
+    ax.set_title(
+        f'Instrument Noise vs Cultural Signal — averaged across {n_models} models\n'
+        'Green line above bar = signal exceeds noise (reliable). '
+        'Bar above line = NSR > 1 (validity failure).',
+        fontsize=11.5, fontweight='bold',
     )
+
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=180, bbox_inches='tight')
     plt.close()
     print(f"Saved: {out_path}")
 
@@ -319,6 +299,103 @@ def plot_noise_signal_heatmap(decomp: pd.DataFrame, out_path: Path) -> None:
 
     plt.tight_layout()
     plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+# ── Figure 2b: Noise vs signal scatter ───────────────────────────────────────
+
+# Model origin → marker shape in the NSR scatter
+MODEL_ORIGIN = {
+    'qwen2.5:1.5b': 'East Asian', 'qwen2.5:3b': 'East Asian',
+    'qwen2.5:7b':   'East Asian', 'yi:6b':      'East Asian',
+    'salmatrafi/acegpt:7b': 'MENA',
+}   # everything else → Western
+ORIGIN_MARKERS = {'Western': 'o', 'East Asian': 's', 'MENA': '^'}
+ORIGIN_DODGE   = {'Western': -0.01, 'East Asian': 0.01, 'MENA': 0.0}
+
+# Short display names for the off-scale outlier list
+MODEL_SHORT = {
+    'claude-sonnet-4-6': 'Claude', 'gemma2:2b': 'Gemma2', 'gpt-4o': 'GPT-4o',
+    'gpt-4o-mini': 'GPT-4o-mini', 'llama3.1:8b': 'Llama3.1', 'mistral:7b': 'Mistral',
+    'phi3:mini': 'Phi3', 'qwen2.5:1.5b': 'Qwen2.5-1.5B', 'qwen2.5:3b': 'Qwen2.5-3B',
+    'qwen2.5:7b': 'Qwen2.5-7B', 'salmatrafi/acegpt:7b': 'AceGPT', 'yi:6b': 'Yi',
+}
+
+
+def plot_nsr_scatter(decomp: pd.DataFrame, out_path: Path,
+                     x_max: float = 2.4, y_max: float = 4.2) -> None:
+    """
+    One point per (model, question): x = σ_culture, y = σ_seed + σ_prompt.
+    Points above the y = x diagonal have NSR > 1. Colour = question,
+    marker = model origin. Points above y_max are pinned to the top edge
+    and listed in an inset box.
+    """
+    df = decomp.dropna(subset=['noise_to_signal']).copy()
+    df['origin'] = df['model'].map(MODEL_ORIGIN).fillna('Western')
+    q_colors = {q: plt.cm.tab10(i) for i, q in enumerate(QUESTION_ORDER)}
+
+    n_total = len(df)
+    n_above = int((df['noise_to_signal'] > 1).sum())
+
+    fig, ax = plt.subplots(figsize=(6.4, 4.0))
+
+    diag = np.array([0, x_max])
+    ax.fill_between(diag, diag, y_max, color='#e74c3c', alpha=0.05, linewidth=0)
+    ax.fill_between(diag, 0, diag, color='#2ecc71', alpha=0.05, linewidth=0)
+    ax.plot(diag, diag, '--', color='#444444', linewidth=1.3, zorder=2)
+
+    on_scale  = df[df['sigma_noise'] <= y_max]
+    off_scale = df[df['sigma_noise'] >  y_max].sort_values('noise_to_signal', ascending=False)
+
+    for origin, marker in ORIGIN_MARKERS.items():
+        sub = on_scale[on_scale['origin'] == origin]
+        ax.scatter(sub['sigma_culture'] + ORIGIN_DODGE[origin], sub['sigma_noise'],
+                   c=[q_colors[q] for q in sub['question_id']], marker=marker,
+                   s=40, alpha=0.8, edgecolors='white', linewidths=0.5, zorder=3)
+
+    # Off-scale points: pinned to the top edge, spread apart when they share a question
+    lines = ['Off-scale outliers:']
+    for qid, grp in off_scale.groupby('question_id', sort=False):
+        k = len(grp)
+        for i, (_, row) in enumerate(grp.iterrows()):
+            n = off_scale.index.get_loc(row.name) + 1
+            px = row['sigma_culture'] + (i - (k - 1) / 2) * 0.09
+            ax.scatter(px, y_max - 0.06, c=[q_colors[qid]],
+                       marker=ORIGIN_MARKERS[row['origin']], s=90,
+                       edgecolors='#c0392b', linewidths=1.5, zorder=6, clip_on=False)
+            ax.text(px, y_max - 0.32, f'[{n}]', ha='center', va='center',
+                    fontsize=8.5, fontweight='bold', color='#c0392b', zorder=6)
+    for n, (_, row) in enumerate(off_scale.iterrows(), start=1):
+        lines.append(f"[{n}] {MODEL_SHORT.get(row['model'], row['model'])}×{row['question_id']}"
+                     f"  NSR={row['noise_to_signal']:.2f}")
+    if len(off_scale):
+        ax.text(0.02, 0.97, '\n'.join(lines), transform=ax.transAxes,
+                ha='left', va='top', fontsize=7.5, family='monospace', zorder=7,
+                bbox=dict(boxstyle='round,pad=0.35', facecolor='white',
+                          edgecolor='#999999', alpha=0.95))
+
+    ax.set_xlim(0, x_max)
+    ax.set_ylim(0, y_max)
+    ax.set_xlabel(r'$\sigma_{\mathrm{culture}}$', fontsize=11)
+    ax.set_ylabel(r'$\sigma_{\mathrm{seed}} + \sigma_{\mathrm{prompt}}$', fontsize=11)
+    ax.grid(True, alpha=0.3)
+    ax.set_title(f'Noise vs Signal, {n_total} pairs — {n_above} above threshold '
+                 f'({n_above / n_total:.0%})', fontsize=11, fontweight='bold')
+
+    # Legend: questions by colour, origins by shape (column-major, 2 rows)
+    handles = [plt.Line2D([0], [0], marker='o', linestyle='', color=q_colors[q],
+                          markersize=7, label=q) for q in QUESTION_ORDER]
+    handles += [plt.Line2D([0], [0], marker=m, linestyle='', color='#666666',
+                           markeredgecolor='black', markeredgewidth=0.5,
+                           markersize=8, label=o) for o, m in ORIGIN_MARKERS.items()]
+    handles.append(plt.Line2D([0], [0], linestyle='--', color='black', label='NSR = 1'))
+    ax.legend(handles=handles, loc='upper center', bbox_to_anchor=(0.5, -0.17),
+              ncol=7, fontsize=8, handletextpad=0.3, columnspacing=1.0)
+
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=180, bbox_inches='tight')
     plt.close()
     print(f"Saved: {out_path}")
 
@@ -628,9 +705,11 @@ def main():
 
     print("\nGenerating figures...")
     plot_variance_bars(
-        decomp, OUTPUTS_DIR / f"variance_bars{ms_tag}_{ts}.png")
+        decomp, OUTPUTS_DIR / f"variance_bars_simplified{ms_tag}_{ts}.png")
     plot_noise_signal_heatmap(
         decomp, OUTPUTS_DIR / f"noise_signal_heatmap{ms_tag}_{ts}.png")
+    plot_nsr_scatter(
+        decomp, OUTPUTS_DIR / f"nsr_scatter{ms_tag}_{ts}.png")
 
     print("Fitting PCA for combined map...")
     pca_gen     = load_pca()
